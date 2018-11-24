@@ -10,6 +10,7 @@ from torch.autograd import Variable
 
 from .util import block_orthogonal, get_dropout_mask
 
+
 class LstmCellWithProjection(torch.nn.Module):
     """
     An LSTM with Recurrent Dropout and a projected and clipped hidden state and

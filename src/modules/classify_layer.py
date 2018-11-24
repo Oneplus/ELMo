@@ -104,7 +104,7 @@ class SampledSoftmaxLayer(nn.Module):
     self.embedding_matrix = self.column_emb.forward(columns).transpose(0, 1)
 
   def update_negative_samples(self, word_inp, chars_inp, mask):
-    batch_size, seq_len = word_inp.size(0), word_inp.size(1)
+    batch_size, seq_len = mask.size()
     in_batch = set()
     for i in range(batch_size):
       for j in range(seq_len):

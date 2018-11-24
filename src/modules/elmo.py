@@ -105,7 +105,6 @@ class ElmobiLm(_EncoderBase):
     # Has shape (num_layers, batch_size, sequence_length, hidden_size)
     return stacked_sequence_output.index_select(1, restoration_indices)
 
-
   def _lstm_forward(self, 
                     inputs: PackedSequence,
                     initial_state: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> \

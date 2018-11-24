@@ -1,11 +1,7 @@
 from __future__ import absolute_import
 from __future__ import unicode_literals
-import logging
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torch.autograd import Variable
-import copy
 
 
 class LstmbiLm(nn.Module):

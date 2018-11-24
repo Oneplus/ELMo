@@ -110,13 +110,15 @@ class SampledSoftmaxLayer(nn.Module):
       for j in range(seq_len):
         if mask[i][j] == 0:
           continue
-        word = word_inp[i][j].tolist()
+        # word = word_inp[i][j].tolist()
+        word = word_inp[i][j]
         in_batch.add(word)
     for i in range(batch_size):
       for j in range(seq_len):
         if mask[i][j] == 0:
           continue
-        word = word_inp[i][j].tolist()
+        #word = word_inp[i][j].tolist()
+        word = word_inp[i][j]
         if word not in self.all_word_to_column:
           self.all_word.append(word)
           self.all_word_to_column[word] = len(self.all_word_to_column)

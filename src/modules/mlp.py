@@ -17,8 +17,13 @@ class MLPbiLm(nn.Module):
     hidden_size = config['encoder']['projection_dim']
     num_layers = config['encoder']['n_layers']
 
-    self.left_padding = torch.autograd.Variable(torch.FloatTensor(width, hidden_size))
-    self.right_padding = torch.autograd.Variable(torch.FloatTensor(width, hidden_size))
+    if use_cuda:
+       self.left_padding = torch.autograd.Variable(torch.cuda.FloatTensor(width, hidden_size))
+       self.right_padding = torch.autograd.Variable(torch.cuda.FloatTensor(width, hidden_size))
+    else:
+       self.left_padding = torch.autograd.Variable(torch.FloatTensor(width, hidden_size))
+       self.right_padding = torch.autograd.Variable(torch.FloatTensor(width, hidden_size))
+
     self.left_project = nn.Linear(input_size, hidden_size)
     self.right_project = nn.Linear(input_size, hidden_size)
 
@@ -38,8 +43,8 @@ class MLPbiLm(nn.Module):
     outs = []
     for start in range(sequence_len):
       end = start + self.width
-      left_inp = new_inputs.narrow(1, start, self.width).view(batch_size, -1)
-      right_inp = new_inputs.narrow(1, end + 1, self.width).view(batch_size, -1)
+      left_inp = new_inputs.narrow(1, start, self.width).contiguous().view(batch_size, -1)
+      right_inp = new_inputs.narrow(1, end + 1, self.width).contiguous().view(batch_size, -1)
 
       left_out = self.left_highway(
         F.dropout(self.left_project(left_inp), self.config['dropout'], self.training))

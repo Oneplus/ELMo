@@ -18,6 +18,7 @@ import collections
 from torch.autograd import Variable
 from modules.elmo import ElmobiLm
 from modules.lstm import LstmbiLm
+from modules.mlp import MLPbiLm
 from modules.token_embedder import ConvTokenEmbedder, LstmTokenEmbedder
 from modules.embedding_layer import EmbeddingLayer
 from modules.classify_layer import SoftmaxLayer, CNNSoftmaxLayer, SampledSoftmaxLayer
@@ -32,10 +33,14 @@ def dict2namedtuple(dic):
   return collections.namedtuple('Namespace', dic.keys())(**dic)
 
 
-def divide(data, valid_size):
+def split_train_and_valid(data, valid_size):
   valid_size = min(valid_size, len(data) // 10)
   random.shuffle(data)
   return data[valid_size:], data[:valid_size]
+
+
+def count_tokens(raw_data):
+  return sum([len(s) - 1 for s in raw_data])
 
 
 def break_sentence(sentence, max_sent_len):
@@ -144,7 +149,7 @@ def create_one_batch(x, word2id, char2id, config, oov='<oov>', pad='<pad>', sort
       masks[0][i][j] = 1
       if j + 1 < len(x_i):
         masks[1].append(i * max_len + j)
-      if j > 0: 
+      if j > 0:
         masks[2].append(i * max_len + j)
 
   assert len(masks[1]) <= batch_size * max_len
@@ -157,7 +162,7 @@ def create_one_batch(x, word2id, char2id, config, oov='<oov>', pad='<pad>', sort
 
 
 # shuffle training examples and create mini-batches
-def create_batches(x, batch_size, word2id, char2id, config, perm=None, shuffle=True, sort=True, use_cuda=False):
+def create_batches(x, batch_size, word2id, char2id, config, perm=None, shuffle=True, sort=True):
   """
 
   :param x:
@@ -168,7 +173,6 @@ def create_batches(x, batch_size, word2id, char2id, config, perm=None, shuffle=T
   :param perm:
   :param shuffle:
   :param sort:
-  :param use_cuda:
   :return:
   """
   lst = perm or list(range(len(x)))
@@ -220,6 +224,8 @@ class Model(nn.Module):
       self.encoder = ElmobiLm(config, use_cuda)
     elif config['encoder']['name'].lower() == 'lstm':
       self.encoder = LstmbiLm(config, use_cuda)
+    elif config['encoder']['name'].lower() == 'mlp':
+      self.encoder = MLPbiLm(config, use_cuda)
 
     self.output_dim = config['encoder']['projection_dim']
     if config['classifier']['name'].lower() == 'softmax':
@@ -254,6 +260,8 @@ class Model(nn.Module):
       encoder_output = encoder_output[1]
       # [batch_size, len, hidden_size]
     elif encoder_name == 'lstm':
+      encoder_output = self.encoder(token_embedding)
+    elif encoder_name == 'mlp':
       encoder_output = self.encoder(token_embedding)
     else:
       raise ValueError('')
@@ -293,7 +301,6 @@ def eval_model(model, valid):
   if model.config['classifier']['name'].lower() == 'cnn_softmax' or \
       model.config['classifier']['name'].lower() == 'sampled_softmax':
     model.classify_layer.update_embedding_matrix()
-    #print('emb mat size: ', model.classify_layer.embedding_matrix.size())
   total_loss, total_tag = 0.0, 0
   valid_w, valid_c, valid_lens, valid_masks = valid
   for w, c, lens, masks in zip(valid_w, valid_c, valid_lens, valid_masks):
@@ -452,7 +459,7 @@ def train():
   print(opt)
   print(config)
 
-  # set seed.
+  # Set seed.
   torch.manual_seed(opt.seed)
   random.seed(opt.seed)
   if opt.gpu >= 0:
@@ -464,46 +471,47 @@ def train():
 
   token_embedder_name = config['token_embedder']['name'].lower()
   token_embedder_max_chars = config['token_embedder'].get('max_characters_per_token', None)
+
+  # Load training data.
   if token_embedder_name == 'cnn':
-    train_data = read_corpus(opt.train_path, token_embedder_max_chars, opt.max_sent_len)
+    raw_training_data = read_corpus(opt.train_path, token_embedder_max_chars, opt.max_sent_len)
   elif token_embedder_name == 'lstm':
-    train_data = read_corpus(opt.train_path, opt.max_sent_len)
+    raw_training_data = read_corpus(opt.train_path, max_sent_len=opt.max_sent_len)
   else:
     raise ValueError('Unknown token embedder name: {}'.format(token_embedder_name))
+  logging.info('training instance: {}, training tokens: {}.'.format(
+    len(raw_training_data), count_tokens(raw_training_data)))
 
-  logging.info('training instance: {}, training tokens: {}.'.format(len(train_data),
-                                                                    sum([len(s) - 1 for s in train_data])))
-
+  # Load valid data if path is provided, else use 10% of training data as valid data
   if opt.valid_path is not None:
     if token_embedder_name == 'cnn':
-      valid_data = read_corpus(opt.valid_path, token_embedder_max_chars, opt.max_sent_len)
+      raw_valid_data = read_corpus(opt.valid_path, token_embedder_max_chars, opt.max_sent_len)
     elif token_embedder_name == 'lstm':
-      valid_data = read_corpus(opt.valid_path, opt.max_sent_len)
+      raw_valid_data = read_corpus(opt.valid_path, max_sent_len=opt.max_sent_len)
     else:
       raise ValueError('Unknown token embedder name: {}'.format(token_embedder_name))
-    logging.info('valid instance: {}, valid tokens: {}.'.format(len(valid_data),
-                                                                sum([len(s) - 1 for s in valid_data])))
+    logging.info('valid instance: {}, valid tokens: {}.'.format(len(raw_valid_data), count_tokens(raw_valid_data)))
   elif opt.valid_size > 0:
-    train_data, valid_data = divide(train_data, opt.valid_size)
+    raw_training_data, raw_valid_data = split_train_and_valid(raw_training_data, opt.valid_size)
     logging.info('training instance: {}, training tokens after division: {}.'.format(
-      len(train_data), sum([len(s) - 1 for s in train_data])))
-    logging.info('valid instance: {}, valid tokens: {}.'.format(
-      len(valid_data), sum([len(s) - 1 for s in valid_data])))
+      len(raw_training_data), count_tokens(raw_training_data)))
+    logging.info('valid instance: {}, valid tokens: {}.'.format(len(raw_valid_data), count_tokens(raw_valid_data)))
   else:
-    valid_data = None
+    raw_valid_data = None
 
+  # Load test data if path is provided.
   if opt.test_path is not None:
     if token_embedder_name == 'cnn':
-      test_data = read_corpus(opt.test_path, token_embedder_max_chars, opt.max_sent_len)
+      raw_test_data = read_corpus(opt.test_path, token_embedder_max_chars, opt.max_sent_len)
     elif token_embedder_name == 'lstm':
-      test_data = read_corpus(opt.test_path, opt.max_sent_len)
+      raw_test_data = read_corpus(opt.test_path, max_sent_len=opt.max_sent_len)
     else:
       raise ValueError('Unknown token embedder name: {}'.format(token_embedder_name))
-    logging.info('testing instance: {}, testing tokens: {}.'.format(
-      len(test_data), sum([len(s) - 1 for s in test_data])))
+    logging.info('testing instance: {}, testing tokens: {}.'.format(len(raw_test_data), count_tokens(raw_test_data)))
   else:
-    test_data = None
+    raw_test_data = None
 
+  # Use pre-trained word embeddings
   if opt.word_embedding is not None:
     embs = load_embedding(opt.word_embedding)
     word_lexicon = {word: i for i, word in enumerate(embs[0])}  
@@ -512,7 +520,7 @@ def train():
     word_lexicon = {}
 
   # Maintain the vocabulary. vocabulary is used in either WordEmbeddingInput or softmax classification
-  vocab = get_truncated_vocab(train_data, opt.min_count)
+  vocab = get_truncated_vocab(raw_training_data, opt.min_count)
 
   # Ensure index of '<oov>' is 0
   for special_word in ['<oov>', '<bos>', '<eos>',  '<pad>']:
@@ -534,7 +542,7 @@ def train():
   # Character Lexicon
   if config['token_embedder']['char_dim'] > 0:
     char_lexicon = {}
-    for sentence in train_data:
+    for sentence in raw_training_data:
       for word in sentence:
         for ch in word:
           if ch not in char_lexicon:
@@ -550,36 +558,34 @@ def train():
     char_lexicon = None
     char_emb_layer = None
 
-  train = create_batches(
-    train_data, opt.batch_size, word_lexicon, char_lexicon, config, use_cuda=use_cuda)
+  # Create training batch
+  training_data = create_batches(raw_training_data, opt.batch_size, word_lexicon, char_lexicon, config)
 
+  # Set up evaluation steps.
   if opt.eval_steps is None:
-    opt.eval_steps = len(train_w)
+    training_w = training_data[0]
+    opt.eval_steps = len(training_w)
   logging.info('Evaluate every {0} batches.'.format(opt.eval_steps))
 
-  if valid_data is not None:
-    valid = create_batches(
-      valid_data, opt.batch_size, word_lexicon, char_lexicon, config, sort=False, shuffle=False, use_cuda=use_cuda)
+  # If there is valid, create valid batch.
+  if raw_valid_data is not None:
+    valid_data = create_batches(
+      raw_valid_data, opt.batch_size, word_lexicon, char_lexicon, config, sort=False, shuffle=False)
   else:
-    valid = None
+    valid_data = None
 
-  if test_data is not None:
-    test = create_batches(
-      test_data, opt.batch_size, word_lexicon, char_lexicon, config, sort=False, shuffle=False, use_cuda=use_cuda)
+  # If there is test, create test batch.
+  if raw_test_data is not None:
+    test_data = create_batches(
+      raw_test_data, opt.batch_size, word_lexicon, char_lexicon, config, sort=False, shuffle=False)
   else:
-    test = None
+    test_data = None
 
   label_to_ix = word_lexicon
   logging.info('vocab size: {0}'.format(len(label_to_ix)))
-  
-  nclasses = len(label_to_ix)
+  n_classes = len(label_to_ix)
 
-  #for s in train_w:
-  #  for i in range(s.view(-1).size(0)):
-  #    if s.view(-1)[i] >= nclasses:
-  #      print(s.view(-1)[i])
-
-  model = Model(config, word_emb_layer, char_emb_layer, nclasses, use_cuda)
+  model = Model(config, word_emb_layer, char_emb_layer, n_classes, use_cuda)
   logging.info(str(model))
   if use_cuda:
     model = model.cuda()
@@ -616,17 +622,19 @@ def train():
   test_result = 1e+8
 
   for epoch in range(opt.max_epoch):
-    best_train, best_valid, test_result = train_model(epoch, opt, model, optimizer,
-                                                      train, valid, test, best_train, best_valid, test_result)
+    best_train, best_valid, test_result = train_model(
+      epoch, opt, model, optimizer, training_data, valid_data, test_data, best_train, best_valid, test_result)
+
     if opt.lr_decay > 0:
       optimizer.param_groups[0]['lr'] *= opt.lr_decay
 
-  if valid_data is None:
+  if raw_valid_data is None:
     logging.info("best train ppl: {:.6f}.".format(best_train))
-  elif test_data is None:
+  elif raw_test_data is None:
     logging.info("best train ppl: {:.6f}, best valid ppl: {:.6f}.".format(best_train, best_valid))
   else:
-    logging.info("best train ppl: {:.6f}, best valid ppl: {:.6f}, test ppl: {:.6f}.".format(best_train, best_valid, test_result))
+    logging.info("best train ppl: {:.6f}, best valid ppl: {:.6f}, test ppl: {:.6f}.".format(
+      best_train, best_valid, test_result))
 
 
 def test():

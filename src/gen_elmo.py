@@ -19,6 +19,7 @@ import torch.optim as optim
 from torch.autograd import Variable
 from modules.elmo import ElmobiLm
 from modules.lstm import LstmbiLm
+from modules.mlp import MLPbiLm
 from modules.token_embedder import ConvTokenEmbedder, LstmTokenEmbedder
 from modules.embedding_layer import EmbeddingLayer
 from dataloader import load_embedding
@@ -279,19 +280,32 @@ class Model(nn.Module):
       self.encoder = ElmobiLm(config, use_cuda)
     elif config['encoder']['name'].lower() == 'lstm':
       self.encoder = LstmbiLm(config, use_cuda)
+    elif config['encoder']['name'].lower() == 'mlp':
+      self.encoder = MLPbiLm(config, use_cuda)
+    else:
+      raise ValueError('Unknown encoder name: {}'.format(config['encoder']['name'].lower()))
 
     self.output_dim = config['encoder']['projection_dim']
 
   def forward(self, word_inp, chars_package, mask_package):
     token_embedding = self.token_embedder(word_inp, chars_package, (mask_package[0].size(0), mask_package[0].size(1)))
-    if self.config['encoder']['name'] == 'elmo':
+    if self.config['encoder']['name'].lower() == 'elmo':
       mask = Variable(mask_package[0]).cuda() if self.use_cuda else Variable(mask_package[0])
       encoder_output = self.encoder(token_embedding, mask)
       sz = encoder_output.size()
       token_embedding = torch.cat([token_embedding, token_embedding], dim=2).view(1, sz[1], sz[2], sz[3])
       encoder_output = torch.cat([token_embedding, encoder_output], dim=0)
-    elif self.config['encoder']['name'] == 'lstm':
+    elif self.config['encoder']['name'].lower() == 'lstm':
       encoder_output = self.encoder(token_embedding)
+    elif self.config['encoder']['name'].lower() == 'mlp':
+      encoder_output = self.encoder(token_embedding)
+      sz = encoder_output.size()
+      token_embedding = torch.cat([token_embedding, token_embedding], dim=2).view(1, sz[0], sz[1], sz[2])
+      encoder_output = encoder_output.view(1, sz[0], sz[1], sz[2])
+      encoder_output = torch.cat([token_embedding, encoder_output], dim=0)
+    else:
+      raise ValueError('unknown encoder name: {}'.format(self.config['encoder']['name'].lower()))
+
     return encoder_output
 
   def load_model(self, path):
@@ -416,12 +430,17 @@ def test_main():
         data = output[i, 1:lens[i]-1, :].data
         if use_cuda:
           data = data.cpu()
-        data = data.numpy()
       elif config['encoder']['name'].lower() == 'elmo':
         data = output[:, i, 1:lens[i]-1, :].data
         if use_cuda:
-          data = data.cpu()
-        data = data.numpy()
+          data = data.cp()
+      elif config['encoder']['name'].lower() == 'mlp':
+        data = output[:, i, 1:lens[i] - 1, :].data
+        if use_cuda:
+          data = data.cp()
+      else:
+        raise ValueError('unknown encoder name: {}'.format(config['encoder']['name'].lower()))
+      data = data.numpy()
 
       for (output_format, output_layer) in handlers:
         fout = handlers[output_format, output_layer]

@@ -19,7 +19,7 @@ import torch.optim as optim
 from torch.autograd import Variable
 from modules.elmo import ElmobiLm
 from modules.lstm import LstmbiLm
-from modules.mlp import MLPbiLm
+from modules.bengio03 import Bengio03biLm
 from modules.token_embedder import ConvTokenEmbedder, LstmTokenEmbedder
 from modules.embedding_layer import EmbeddingLayer
 from dataloader import load_embedding
@@ -280,8 +280,10 @@ class Model(nn.Module):
       self.encoder = ElmobiLm(config, use_cuda)
     elif config['encoder']['name'].lower() == 'lstm':
       self.encoder = LstmbiLm(config, use_cuda)
-    elif config['encoder']['name'].lower() == 'mlp':
-      self.encoder = MLPbiLm(config, use_cuda)
+    elif config['encoder']['name'].lower() == 'bengio03':
+      self.encoder = Bengio03biLm(config, use_cuda)
+    elif conifg['encoder']['name'].lower() == 'lbl':
+      self.encoder = LBLbiLm(config, use_cuda)
     else:
       raise ValueError('Unknown encoder name: {}'.format(config['encoder']['name'].lower()))
 
@@ -297,7 +299,13 @@ class Model(nn.Module):
       encoder_output = torch.cat([token_embedding, encoder_output], dim=0)
     elif self.config['encoder']['name'].lower() == 'lstm':
       encoder_output = self.encoder(token_embedding)
-    elif self.config['encoder']['name'].lower() == 'mlp':
+    elif self.config['encoder']['name'].lower() == 'bengio03':
+      encoder_output = self.encoder(token_embedding)
+      sz = encoder_output.size()
+      token_embedding = torch.cat([token_embedding, token_embedding], dim=2).view(1, sz[0], sz[1], sz[2])
+      encoder_output = encoder_output.view(1, sz[0], sz[1], sz[2])
+      encoder_output = torch.cat([token_embedding, encoder_output], dim=0)
+    elif self.config['encoder']['name'].lower() == 'lbl':
       encoder_output = self.encoder(token_embedding)
       sz = encoder_output.size()
       token_embedding = torch.cat([token_embedding, token_embedding], dim=2).view(1, sz[0], sz[1], sz[2])
@@ -433,11 +441,15 @@ def test_main():
       elif config['encoder']['name'].lower() == 'elmo':
         data = output[:, i, 1:lens[i]-1, :].data
         if use_cuda:
-          data = data.cp()
-      elif config['encoder']['name'].lower() == 'mlp':
+          data = data.cpu()
+      elif config['encoder']['name'].lower() == 'bengio03':
         data = output[:, i, 1:lens[i] - 1, :].data
         if use_cuda:
-          data = data.cp()
+          data = data.cpu()
+      elif config['encoder']['name'].lower() == 'lbl':
+        data = output[:, i, 1:lens[i] - 1, :].data
+        if use_cuda:
+          data = data.cpu()
       else:
         raise ValueError('unknown encoder name: {}'.format(config['encoder']['name'].lower()))
       data = data.numpy()

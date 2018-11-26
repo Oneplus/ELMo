@@ -18,7 +18,8 @@ import collections
 from torch.autograd import Variable
 from modules.elmo import ElmobiLm
 from modules.lstm import LstmbiLm
-from modules.mlp import MLPbiLm
+from modules.bengio03 import Bengio03biLm, Bengio03withPositionBiLm
+from modules.lbl import LBLbiLm
 from modules.token_embedder import ConvTokenEmbedder, LstmTokenEmbedder
 from modules.embedding_layer import EmbeddingLayer
 from modules.classify_layer import SoftmaxLayer, CNNSoftmaxLayer, SampledSoftmaxLayer
@@ -215,17 +216,27 @@ class Model(nn.Module):
     self.use_cuda = use_cuda
     self.config = config
 
-    if config['token_embedder']['name'].lower() == 'cnn':
+    token_embedder_name = config['token_embedder']['name'].lower()
+    if token_embedder_name == 'cnn':
       self.token_embedder = ConvTokenEmbedder(config, word_emb_layer, char_emb_layer, use_cuda)
-    elif config['token_embedder']['name'].lower() == 'lstm':
+    elif token_embedder_name == 'lstm':
       self.token_embedder = LstmTokenEmbedder(config, word_emb_layer, char_emb_layer, use_cuda)
+    else:
+      raise ValueError('Unknown token embedder name: {}'.format(token_embedder_name))
 
-    if config['encoder']['name'].lower() == 'elmo':
+    encoder_name = config['encoder']['name'].lower()
+    if encoder_name == 'elmo':
       self.encoder = ElmobiLm(config, use_cuda)
-    elif config['encoder']['name'].lower() == 'lstm':
+    elif encoder_name == 'lstm':
       self.encoder = LstmbiLm(config, use_cuda)
-    elif config['encoder']['name'].lower() == 'mlp':
-      self.encoder = MLPbiLm(config, use_cuda)
+    elif encoder_name == 'bengio03':
+      self.encoder = Bengio03biLm(config, use_cuda)
+    elif encoder_name == 'bengio03pos':
+      self.encoder = Bengio03withPositionBiLm(config, use_cuda)
+    elif encoder_name == 'lbl':
+      self.encoder = LBLbiLm(config, use_cuda)
+    else:
+      raise ValueError('Unknown encoder name: {}'.format(encoder_name))
 
     self.output_dim = config['encoder']['projection_dim']
     if config['classifier']['name'].lower() == 'softmax':
@@ -261,10 +272,14 @@ class Model(nn.Module):
       # [batch_size, len, hidden_size]
     elif encoder_name == 'lstm':
       encoder_output = self.encoder(token_embedding)
-    elif encoder_name == 'mlp':
+    elif encoder_name == 'bengio03':
+      encoder_output = self.encoder(token_embedding)
+    elif encoder_name == 'bengio03pos':
+      encoder_output = self.encoder(token_embedding)
+    elif encoder_name == 'lbl':
       encoder_output = self.encoder(token_embedding)
     else:
-      raise ValueError('')
+      raise ValueError('Unknown encoder name: {}'.format(encoder_name))
 
     encoder_output = F.dropout(encoder_output, self.config['dropout'], self.training)
     forward, backward = encoder_output.split(self.output_dim, 2)
@@ -586,6 +601,11 @@ def train():
   n_classes = len(label_to_ix)
 
   model = Model(config, word_emb_layer, char_emb_layer, n_classes, use_cuda)
+
+  for p in model.parameters():
+    if p.dim() > 1:
+      torch.nn.init.xavier_uniform(p)
+
   logging.info(str(model))
   if use_cuda:
     model = model.cuda()

@@ -233,7 +233,7 @@ def train_model(epoch, model, optimizer,
     n_tags = sum(lens)
     total_tag += n_tags
     loss.backward()
-    torch.nn.utils.clip_grad_norm(model.parameters(), opt.clip_grad)
+    torch.nn.utils.clip_grad_norm_(model.parameters(), opt.clip_grad)
     optimizer.step()
 
     if cnt * opt.batch_size % 1024 == 0:

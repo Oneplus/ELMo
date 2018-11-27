@@ -19,7 +19,7 @@ from torch.autograd import Variable
 from modules.elmo import ElmobiLm
 from modules.lstm import LstmbiLm
 from modules.bengio03 import Bengio03biLm, Bengio03withPositionBiLm
-from modules.lbl import LBLbiLm
+from modules.lbl import LBLbiLm, LBLwithPositionBiLm
 from modules.token_embedder import ConvTokenEmbedder, LstmTokenEmbedder
 from modules.embedding_layer import EmbeddingLayer
 from modules.classify_layer import SoftmaxLayer, CNNSoftmaxLayer, SampledSoftmaxLayer
@@ -235,6 +235,8 @@ class Model(nn.Module):
       self.encoder = Bengio03withPositionBiLm(config, use_cuda)
     elif encoder_name == 'lbl':
       self.encoder = LBLbiLm(config, use_cuda)
+    elif encoder_name == 'lblpos':
+      self.encoder = LBLwithPositionBiLm(config, use_cuda)
     else:
       raise ValueError('Unknown encoder name: {}'.format(encoder_name))
 
@@ -277,6 +279,8 @@ class Model(nn.Module):
     elif encoder_name == 'bengio03pos':
       encoder_output = self.encoder(token_embedding)
     elif encoder_name == 'lbl':
+      encoder_output = self.encoder(token_embedding)
+    elif encoder_name == 'lblpos':
       encoder_output = self.encoder(token_embedding)
     else:
       raise ValueError('Unknown encoder name: {}'.format(encoder_name))
@@ -371,7 +375,7 @@ def train_model(epoch, opt, model, optimizer,
     total_tag += n_tags
     loss.backward()
 
-    torch.nn.utils.clip_grad_norm(model.parameters(), opt.clip_grad)
+    torch.nn.utils.clip_grad_norm_(model.parameters(), opt.clip_grad)
     optimizer.step()
     if cnt * opt.batch_size % 1024 == 0:
       logging.info("Epoch={} iter={} lr={:.6f} train_ppl={:.6f} time={:.2f}s".format(
@@ -601,10 +605,6 @@ def train():
   n_classes = len(label_to_ix)
 
   model = Model(config, word_emb_layer, char_emb_layer, n_classes, use_cuda)
-
-  for p in model.parameters():
-    if p.dim() > 1:
-      torch.nn.init.xavier_uniform(p)
 
   logging.info(str(model))
   if use_cuda:

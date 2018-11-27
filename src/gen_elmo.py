@@ -19,7 +19,8 @@ import torch.optim as optim
 from torch.autograd import Variable
 from modules.elmo import ElmobiLm
 from modules.lstm import LstmbiLm
-from modules.bengio03 import Bengio03biLm
+from modules.bengio03 import Bengio03biLm, Bengio03withPositionBiLm
+from modules.lbl import LBLbiLm, LBLwithPositionBiLm
 from modules.token_embedder import ConvTokenEmbedder, LstmTokenEmbedder
 from modules.embedding_layer import EmbeddingLayer
 from dataloader import load_embedding
@@ -276,14 +277,19 @@ class Model(nn.Module):
     elif config['token_embedder']['name'].lower() == 'lstm':
       self.token_embedder = LstmTokenEmbedder(config, word_emb_layer, char_emb_layer, use_cuda)
 
-    if config['encoder']['name'].lower() == 'elmo':
+    encoder_name = config['encoder']['name'].lower()
+    if encoder_name == 'elmo':
       self.encoder = ElmobiLm(config, use_cuda)
-    elif config['encoder']['name'].lower() == 'lstm':
+    elif encoder_name == 'lstm':
       self.encoder = LstmbiLm(config, use_cuda)
-    elif config['encoder']['name'].lower() == 'bengio03':
+    elif encoder_name == 'bengio03':
       self.encoder = Bengio03biLm(config, use_cuda)
-    elif conifg['encoder']['name'].lower() == 'lbl':
+    elif encoder_name == 'bengio03pos':
+      self.encoder = Bengio03withPositionBiLm(config, use_cuda)
+    elif encoder_name == 'lbl':
       self.encoder = LBLbiLm(config, use_cuda)
+    elif encoder_name == 'lblpos':
+      self.encoder = LBLwithPositionBiLm(config, use_cuda)
     else:
       raise ValueError('Unknown encoder name: {}'.format(config['encoder']['name'].lower()))
 
@@ -291,28 +297,29 @@ class Model(nn.Module):
 
   def forward(self, word_inp, chars_package, mask_package):
     token_embedding = self.token_embedder(word_inp, chars_package, (mask_package[0].size(0), mask_package[0].size(1)))
-    if self.config['encoder']['name'].lower() == 'elmo':
+    encoder_name = self.config['encoder']['name'].lower()
+    if encoder_name == 'elmo':
       mask = Variable(mask_package[0]).cuda() if self.use_cuda else Variable(mask_package[0])
       encoder_output = self.encoder(token_embedding, mask)
       sz = encoder_output.size()
       token_embedding = torch.cat([token_embedding, token_embedding], dim=2).view(1, sz[1], sz[2], sz[3])
       encoder_output = torch.cat([token_embedding, encoder_output], dim=0)
-    elif self.config['encoder']['name'].lower() == 'lstm':
+    elif encoder_name == 'lstm':
       encoder_output = self.encoder(token_embedding)
-    elif self.config['encoder']['name'].lower() == 'bengio03':
+    elif encoder_name == 'bengio03' or encoder_name == 'bengio03pos':
       encoder_output = self.encoder(token_embedding)
       sz = encoder_output.size()
       token_embedding = torch.cat([token_embedding, token_embedding], dim=2).view(1, sz[0], sz[1], sz[2])
       encoder_output = encoder_output.view(1, sz[0], sz[1], sz[2])
       encoder_output = torch.cat([token_embedding, encoder_output], dim=0)
-    elif self.config['encoder']['name'].lower() == 'lbl':
+    elif encoder_name == 'lbl' or encoder_name == 'lblpos':
       encoder_output = self.encoder(token_embedding)
       sz = encoder_output.size()
       token_embedding = torch.cat([token_embedding, token_embedding], dim=2).view(1, sz[0], sz[1], sz[2])
       encoder_output = encoder_output.view(1, sz[0], sz[1], sz[2])
       encoder_output = torch.cat([token_embedding, encoder_output], dim=0)
     else:
-      raise ValueError('unknown encoder name: {}'.format(self.config['encoder']['name'].lower()))
+      raise ValueError('unknown encoder name: {}'.format(encoder_name))
 
     return encoder_output
 
@@ -434,24 +441,25 @@ def test_main():
       if sent in sent_set:
         continue
       sent_set.add(sent)
-      if config['encoder']['name'].lower() == 'lstm':
+      encoder_name = config['encoder']['name'].lower()
+      if encoder_name == 'lstm':
         data = output[i, 1:lens[i]-1, :].data
         if use_cuda:
           data = data.cpu()
-      elif config['encoder']['name'].lower() == 'elmo':
+      elif encoder_name == 'elmo':
         data = output[:, i, 1:lens[i]-1, :].data
         if use_cuda:
           data = data.cpu()
-      elif config['encoder']['name'].lower() == 'bengio03':
+      elif encoder_name == 'bengio03' or encoder_name == 'bengio03pos':
         data = output[:, i, 1:lens[i] - 1, :].data
         if use_cuda:
           data = data.cpu()
-      elif config['encoder']['name'].lower() == 'lbl':
+      elif encoder_name == 'lbl' or encoder_name == 'lblpos':
         data = output[:, i, 1:lens[i] - 1, :].data
         if use_cuda:
           data = data.cpu()
       else:
-        raise ValueError('unknown encoder name: {}'.format(config['encoder']['name'].lower()))
+        raise ValueError('unknown encoder name: {}'.format(encoder_name))
       data = data.numpy()
 
       for (output_format, output_layer) in handlers:

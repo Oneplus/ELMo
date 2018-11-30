@@ -1,12 +1,13 @@
 {
 	"encoder": {
-		"name": "bengio03pos",
+		"name": "bengio03",
 		"projection_dim": 512, 
 		"cell_clip": 3, 
 		"proj_clip": 3,
 		"dim": 4096,
 		"n_layers": 4,
-        "width": 8
+        "width": 8,
+        "position": true
   	},
 
  	"token_embedder": {

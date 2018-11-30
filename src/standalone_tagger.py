@@ -14,10 +14,6 @@ import json
 import tempfile
 import collections
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
-from torch.autograd import Variable
 import subprocess
 logging.basicConfig(level=logging.INFO, format='%(asctime)-15s %(levelname)s: %(message)s')
 
@@ -48,7 +44,7 @@ def read_corpus(path):
   return dataset, labels_dataset
 
 
-def create_one_batch(dim, raw_data, raw_labels, lexicon, sort=True, use_cuda=False):
+def create_one_batch(dim, n_layers, raw_data, raw_labels, lexicon, sort=True, use_cuda=False):
   batch_size = len(raw_data)
   lst = list(range(batch_size))
   if sort:
@@ -59,7 +55,7 @@ def create_one_batch(dim, raw_data, raw_labels, lexicon, sort=True, use_cuda=Fal
   sorted_lens = [len(raw_data[i]) for i in lst]
   max_len = max(sorted_lens)
 
-  batch_x = torch.FloatTensor(batch_size, max_len, dim).fill_(0)
+  batch_x = torch.FloatTensor(batch_size, max_len, n_layers, dim).fill_(0)
   batch_y = torch.LongTensor(batch_size, max_len).fill_(0)
   for i, raw_items in enumerate(sorted_raw_data):
     # new_raw_items = ['<bos>'] + raw_items + ['<eos>']
@@ -77,7 +73,8 @@ def create_one_batch(dim, raw_data, raw_labels, lexicon, sort=True, use_cuda=Fal
 
 
 # shuffle training examples and create mini-batches
-def create_batches(dim, raw_data, raw_labels, lexicon, batch_size, perm=None, shuffle=True, sort=True, use_cuda=False):
+def create_batches(dim, n_layers, raw_data, raw_labels, lexicon, batch_size,
+                   perm=None, shuffle=True, sort=True, use_cuda=False):
   lst = perm or list(range(len(raw_data)))
   if shuffle:
     random.shuffle(lst)
@@ -95,7 +92,7 @@ def create_batches(dim, raw_data, raw_labels, lexicon, batch_size, perm=None, sh
 
   for i in range(n_batch):
     start_id, end_id = i * size, (i + 1) * size
-    bx, by, blens = create_one_batch(dim,
+    bx, by, blens = create_one_batch(dim, n_layers,
                                      sorted_raw_data[start_id: end_id], sorted_raw_labels[start_id: end_id],
                                      lexicon,
                                      sort=sort, use_cuda=use_cuda)
@@ -115,17 +112,17 @@ def create_batches(dim, raw_data, raw_labels, lexicon, batch_size, perm=None, sh
   return batches_x, batches_y, batches_lens
 
 
-class ClassifyLayer(nn.Module):
+class ClassifyLayer(torch.nn.Module):
   def __init__(self, in_dim, n_class, use_cuda=False):
     super(ClassifyLayer, self).__init__()
     self.num_tags = n_class
     self.use_cuda = use_cuda
 
-    self.hidden2tag = nn.Linear(in_dim, n_class)
-    self.logsoftmax = nn.LogSoftmax(dim=2)
+    self.hidden2tag = torch.nn.Linear(in_dim, n_class)
+    self.logsoftmax = torch.nn.LogSoftmax(dim=2)
     weights = torch.ones(n_class)
     weights[0] = 0
-    self.criterion = nn.NLLLoss(weights, size_average=False)
+    self.criterion = torch.nn.NLLLoss(weights, size_average=False)
 
   def forward(self, x, y):
     tag_scores = self.hidden2tag(x)
@@ -135,12 +132,13 @@ class ClassifyLayer(nn.Module):
     _, tag_result = torch.max(tag_scores[:, :, 1:], 2)
     tag_result.add_(1)
     if self.training:
-      return tag_result, self.criterion(tag_scores.view(-1, self.num_tags), Variable(y).view(-1))
+      return tag_result, self.criterion(tag_scores.view(-1, self.num_tags),
+                                        torch.autograd.Variable(y).view(-1))
     else:
       return tag_result, torch.FloatTensor([0.0])
 
 
-class Model(nn.Module):
+class Model(torch.nn.Module):
   def __init__(self, opt, n_class, use_cuda):
     super(Model, self).__init__()
     self.use_cuda = use_cuda
@@ -149,13 +147,17 @@ class Model(nn.Module):
     encoder_input_dim = opt.word_dim
 
     if opt.encoder.lower() == 'lstm':
-      self.encoder = nn.LSTM(encoder_input_dim,
-                             opt.hidden_dim, num_layers=opt.depth, bidirectional=True,
-                             batch_first=True, dropout=opt.dropout)
+      self.encoder = torch.nn.LSTM(encoder_input_dim,
+                                   opt.hidden_dim, num_layers=opt.depth, bidirectional=True,
+                                   batch_first=True, dropout=opt.dropout)
       encoder_output_dim = opt.hidden_dim * 2
     else:
       raise ValueError('Unknown encoder name: {}'.format(opt.encoder.lower()))
 
+    if use_cuda:
+      self.weights = torch.autograd.Variable(torch.cuda.FloatTensor((opt.n_layers, 1)))
+    else:
+      self.weights = torch.autograd.Variable(torch.FloatTensor((opt.n_layers, 1)))
     self.classify_layer = ClassifyLayer(encoder_output_dim, n_class)
     self.train_time = 0
     self.eval_time = 0
@@ -163,7 +165,9 @@ class Model(nn.Module):
     self.classify_time = 0
 
   def forward(self, x, y):
-    output, hidden = self.encoder(torch.autograd.Variable(x, requires_grad=False))
+    x = torch.autograd.Variable(x, requires_grad=False)
+    x = self.weights.expand_as(x).mul(x).sum(dim=2)
+    output, hidden = self.encoder(x)
 
     start_time = time.time()
     output, loss = self.classify_layer.forward(output, y)
@@ -323,6 +327,7 @@ def train():
   use_cuda = opt.gpu >= 0 and torch.cuda.is_available()
 
   lexicon = h5py.File(opt.lexicon, 'r')
+  dim, n_layers = lexicon['#info'][0], lexicon['#info'][1]
 
   raw_training_data, raw_training_labels = read_corpus(opt.train_path)
   raw_valid_data, raw_valid_labels = read_corpus(opt.valid_path)
@@ -348,17 +353,17 @@ def train():
   n_classes = len(label_to_ix)
   ix2label = {ix: label for label, ix in label_to_ix.items()}
 
-  train_payload = create_batches(opt.word_dim, raw_training_data, raw_training_labels,
+  train_payload = create_batches(dim, n_layers, raw_training_data, raw_training_labels,
                                  lexicon, opt.batch_size, use_cuda=use_cuda)
 
   if opt.eval_steps is None or opt.eval_steps > len(train_payload[0]):
     opt.eval_steps = len(train_payload[0])
 
-  valid_payload = create_batches(opt.word_dim, raw_valid_data, raw_valid_labels,
+  valid_payload = create_batches(dim, n_layers, raw_valid_data, raw_valid_labels,
                                  lexicon, opt.batch_size, shuffle=False, sort=False, use_cuda=use_cuda)
 
   if opt.test_path is not None:
-    test_payload = create_batches(opt.word_dim, raw_test_data, raw_test_labels,
+    test_payload = create_batches(dim, n_layers, raw_test_data, raw_test_labels,
                                   lexicon, opt.batch_size, shuffle=False, sort=False, use_cuda=use_cuda)
   else:
     test_payload = None
@@ -370,9 +375,9 @@ def train():
 
   need_grad = lambda x: x.requires_grad
   if opt.optimizer.lower() == 'adam':
-    optimizer = optim.Adam(filter(need_grad, model.parameters()), lr=opt.lr)
+    optimizer = torch.optim.Adam(filter(need_grad, model.parameters()), lr=opt.lr)
   else:
-    optimizer = optim.SGD(filter(need_grad, model.parameters()), lr=opt.lr)
+    optimizer = torch.optim.SGD(filter(need_grad, model.parameters()), lr=opt.lr)
 
   try:
     os.makedirs(opt.model)

@@ -19,7 +19,7 @@
  	},
 	
 	"classifier": {
-		"name": "sampled_softmax",
+		"name": "softmax",
 		"n_samples": 8192
 	},
 	"dropout": 0.1

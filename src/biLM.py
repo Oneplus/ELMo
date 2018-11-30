@@ -18,8 +18,8 @@ import collections
 from torch.autograd import Variable
 from modules.elmo import ElmobiLm
 from modules.lstm import LstmbiLm
-from modules.bengio03 import Bengio03biLm, Bengio03withPositionBiLm
-from modules.lbl import LBLbiLm, LBLwithPositionBiLm
+from modules.bengio03 import Bengio03biLm
+from modules.lbl import LBLbiLm
 from modules.token_embedder import ConvTokenEmbedder, LstmTokenEmbedder
 from modules.embedding_layer import EmbeddingLayer
 from modules.classify_layer import SoftmaxLayer, CNNSoftmaxLayer, SampledSoftmaxLayer
@@ -231,12 +231,8 @@ class Model(nn.Module):
       self.encoder = LstmbiLm(config, use_cuda)
     elif encoder_name == 'bengio03':
       self.encoder = Bengio03biLm(config, use_cuda)
-    elif encoder_name == 'bengio03pos':
-      self.encoder = Bengio03withPositionBiLm(config, use_cuda)
     elif encoder_name == 'lbl':
       self.encoder = LBLbiLm(config, use_cuda)
-    elif encoder_name == 'lblpos':
-      self.encoder = LBLwithPositionBiLm(config, use_cuda)
     else:
       raise ValueError('Unknown encoder name: {}'.format(encoder_name))
 
@@ -275,13 +271,9 @@ class Model(nn.Module):
     elif encoder_name == 'lstm':
       encoder_output = self.encoder(token_embedding)
     elif encoder_name == 'bengio03':
-      encoder_output = self.encoder(token_embedding)
-    elif encoder_name == 'bengio03pos':
-      encoder_output = self.encoder(token_embedding)
+      encoder_output = self.encoder(token_embedding)[1]
     elif encoder_name == 'lbl':
-      encoder_output = self.encoder(token_embedding)
-    elif encoder_name == 'lblpos':
-      encoder_output = self.encoder(token_embedding)
+      encoder_output = self.encoder(token_embedding)[1]
     else:
       raise ValueError('Unknown encoder name: {}'.format(encoder_name))
 
@@ -324,7 +316,7 @@ def eval_model(model, valid):
   valid_w, valid_c, valid_lens, valid_masks = valid
   for w, c, lens, masks in zip(valid_w, valid_c, valid_lens, valid_masks):
     loss_forward, loss_backward = model.forward(w, c, masks)
-    total_loss += loss_forward.data[0]
+    total_loss += loss_forward.item()
     n_tags = sum(lens)
     total_tag += n_tags
   model.train()
@@ -370,7 +362,7 @@ def train_model(epoch, opt, model, optimizer,
     loss_forward, loss_backward = model.forward(w, c, masks)
 
     loss = (loss_forward + loss_backward) / 2.0
-    total_loss += loss_forward.data[0]
+    total_loss += loss_forward.item()
     n_tags = sum(lens)
     total_tag += n_tags
     loss.backward()

@@ -2,29 +2,20 @@
 from __future__ import print_function
 from __future__ import unicode_literals
 import os
-import errno
 import sys
 import codecs
 import argparse
-import time
 import random
 import logging
 import json
-import copy
-import tempfile
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
 from torch.autograd import Variable
 from modules.elmo import ElmobiLm
 from modules.lstm import LstmbiLm
-from modules.bengio03 import Bengio03biLm, Bengio03withPositionBiLm
-from modules.lbl import LBLbiLm, LBLwithPositionBiLm
+from modules.bengio03 import Bengio03biLm
+from modules.lbl import LBLbiLm
 from modules.token_embedder import ConvTokenEmbedder, LstmTokenEmbedder
 from modules.embedding_layer import EmbeddingLayer
-from dataloader import load_embedding
-import subprocess
 import numpy as np
 import h5py
 import collections
@@ -266,7 +257,7 @@ def create_batches(x, batch_size, word2id, char2id, config, perm=None, shuffle=T
   return batches_w, batches_c, batches_lens, batches_masks
 
 
-class Model(nn.Module):
+class Model(torch.nn.Module):
   def __init__(self, config, word_emb_layer, char_emb_layer, use_cuda=False):
     super(Model, self).__init__()
     self.use_cuda = use_cuda
@@ -284,14 +275,10 @@ class Model(nn.Module):
       self.encoder = LstmbiLm(config, use_cuda)
     elif encoder_name == 'bengio03':
       self.encoder = Bengio03biLm(config, use_cuda)
-    elif encoder_name == 'bengio03pos':
-      self.encoder = Bengio03withPositionBiLm(config, use_cuda)
     elif encoder_name == 'lbl':
       self.encoder = LBLbiLm(config, use_cuda)
-    elif encoder_name == 'lblpos':
-      self.encoder = LBLwithPositionBiLm(config, use_cuda)
     else:
-      raise ValueError('Unknown encoder name: {}'.format(config['encoder']['name'].lower()))
+      raise ValueError('Unknown encoder name: {}'.format(encoder_name))
 
     self.output_dim = config['encoder']['projection_dim']
 
@@ -306,14 +293,14 @@ class Model(nn.Module):
       encoder_output = torch.cat([token_embedding, encoder_output], dim=0)
     elif encoder_name == 'lstm':
       encoder_output = self.encoder(token_embedding)
-    elif encoder_name == 'bengio03' or encoder_name == 'bengio03pos':
-      encoder_output = self.encoder(token_embedding)
+    elif encoder_name == 'bengio03':
+      encoder_output = self.encoder(token_embedding)[0]
       sz = encoder_output.size()
       token_embedding = torch.cat([token_embedding, token_embedding], dim=2).view(1, sz[0], sz[1], sz[2])
       encoder_output = encoder_output.view(1, sz[0], sz[1], sz[2])
       encoder_output = torch.cat([token_embedding, encoder_output], dim=0)
-    elif encoder_name == 'lbl' or encoder_name == 'lblpos':
-      encoder_output = self.encoder(token_embedding)
+    elif encoder_name == 'lbl':
+      encoder_output = self.encoder(token_embedding)[0]
       sz = encoder_output.size()
       token_embedding = torch.cat([token_embedding, token_embedding], dim=2).view(1, sz[0], sz[1], sz[2])
       encoder_output = encoder_output.view(1, sz[0], sz[1], sz[2])
@@ -429,8 +416,14 @@ def test_main():
       continue
     for output_layer in output_layers:
       filename = '{0}.ly{1}.{2}'.format(args.output_prefix, output_layer, output_format)
-      handlers[output_format, output_layer] = \
-        h5py.File(filename, 'w') if output_format == 'hdf5' else open(filename, 'w')
+      handlers[output_format, output_layer] = h5py.File(filename, 'w') if output_format == 'hdf5' else open(filename, 'w')
+
+      if output_format == 'hdf5':
+        info = np.ndarray([config['encoder']['projection_dim'], config['encoder']['n_layers']])
+        fout.create_dataset('#info', info.shape, dtype='int', data=info)
+      else:
+        print('#projection_dim: {}'.format(config['encoder']['projection_dim']), file=fout)
+        print('#n_layers: {}'.format(config['encoder']['n_layers']), file=fout)
 
   for w, c, lens, masks, texts in zip(test_w, test_c, test_lens, test_masks, test_text):
     output = model.forward(w, c, masks)
@@ -450,11 +443,11 @@ def test_main():
         data = output[:, i, 1:lens[i]-1, :].data
         if use_cuda:
           data = data.cpu()
-      elif encoder_name == 'bengio03' or encoder_name == 'bengio03pos':
+      elif encoder_name == 'bengio03':
         data = output[:, i, 1:lens[i] - 1, :].data
         if use_cuda:
           data = data.cpu()
-      elif encoder_name == 'lbl' or encoder_name == 'lblpos':
+      elif encoder_name == 'lbl':
         data = output[:, i, 1:lens[i] - 1, :].data
         if use_cuda:
           data = data.cpu()
@@ -466,8 +459,11 @@ def test_main():
         fout = handlers[output_format, output_layer]
         if output_layer == -1:
           payload = np.average(data, axis=0)
+        elif output_layer == -2:
+          payload = data
         else:
           payload = data[output_layer]
+
         if output_format == 'hdf5':
           fout.create_dataset(sent, payload.shape, dtype='float32', data=payload)
         else:

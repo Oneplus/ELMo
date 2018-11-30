@@ -34,10 +34,12 @@ class Bengio03biLm(torch.nn.Module):
     self.left_project = torch.nn.Linear(input_size, hidden_size)
     self.right_project = torch.nn.Linear(input_size, hidden_size)
 
-    self.left_linears = [PositionwiseFeedForward(hidden_size, hidden_size, self.config['dropout'])
-                         for _ in range(num_layers)]
-    self.right_linears = [PositionwiseFeedForward(hidden_size, hidden_size, self.config['dropout'])
-                          for _ in range(num_layers)]
+    self.left_linears = torch.nn.ModuleList(
+      [PositionwiseFeedForward(hidden_size, hidden_size, self.config['dropout'])
+       for _ in range(num_layers)])
+    self.right_linears = torch.nn.ModuleList(
+      [PositionwiseFeedForward(hidden_size, hidden_size, self.config['dropout'])
+       for _ in range(num_layers)])
 
     self.left_blocks = torch.nn.ModuleList(
       [SublayerConnection(hidden_size, self.config['dropout']) for _ in range(num_layers)])

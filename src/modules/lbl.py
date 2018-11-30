@@ -35,10 +35,12 @@ class LBLbiLm(torch.nn.Module):
     if self.use_position:
       self.position = PositionalEncoding(config['encoder']['projection_dim'], self.config['dropout'])
 
-    self.left_linears = [PositionwiseFeedForward(hidden_size, hidden_size, self.config['dropout'])
-                         for _ in range(num_layers)]
-    self.right_linears = [PositionwiseFeedForward(hidden_size, hidden_size, self.config['dropout'])
-                          for _ in range(num_layers)]
+    self.left_linears = torch.nn.ModuleList(
+      [PositionwiseFeedForward(hidden_size, hidden_size, self.config['dropout'])
+       for _ in range(num_layers)])
+    self.right_linears = torch.nn.ModuleList(
+      [PositionwiseFeedForward(hidden_size, hidden_size, self.config['dropout'])
+       for _ in range(num_layers)])
 
     self.left_blocks = torch.nn.ModuleList(
       [SublayerConnection(hidden_size, self.config['dropout']) for _ in range(num_layers)])

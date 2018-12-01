@@ -1,13 +1,8 @@
 {
 	"encoder": {
-		"name": "lbl",
+		"name": "lblver1",
 		"projection_dim": 512, 
-		"cell_clip": 3, 
-		"proj_clip": 3,
-		"dim": 4096,
-		"n_layers": 4,
-        "width": 8,
-        "position": true
+        "width": 8
   	},
 
  	"token_embedder": {

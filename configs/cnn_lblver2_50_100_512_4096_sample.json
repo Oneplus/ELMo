@@ -1,10 +1,7 @@
 {
 	"encoder": {
-		"name": "lbl",
+		"name": "lblver2",
 		"projection_dim": 512, 
-		"cell_clip": 3, 
-		"proj_clip": 3,
-		"dim": 4096,
 		"n_layers": 2,
         "width": 8
   	},

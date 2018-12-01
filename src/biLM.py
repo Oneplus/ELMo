@@ -11,15 +11,12 @@ import random
 import logging
 import json
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
 import collections
 from torch.autograd import Variable
 from modules.elmo import ElmobiLm
 from modules.lstm import LstmbiLm
-from modules.bengio03 import Bengio03biLm
-from modules.lbl import LBLbiLm
+from modules.bengio03 import Bengio03BiLmVer1, Bengio03BiLmVer2
+from modules.lbl import LBLBiLmVer1, LBLBiLmVer2
 from modules.token_embedder import ConvTokenEmbedder, LstmTokenEmbedder
 from modules.embedding_layer import EmbeddingLayer
 from modules.classify_layer import SoftmaxLayer, CNNSoftmaxLayer, SampledSoftmaxLayer
@@ -210,11 +207,12 @@ def create_batches(x, batch_size, word2id, char2id, config, perm=None, shuffle=T
   return batches_w, batches_c, batches_lens, batches_masks
 
 
-class Model(nn.Module):
+class Model(torch.nn.Module):
   def __init__(self, config, word_emb_layer, char_emb_layer, n_class, use_cuda=False):
     super(Model, self).__init__() 
     self.use_cuda = use_cuda
     self.config = config
+    self.dropout = torch.nn.Dropout(p=config['dropout'])
 
     token_embedder_name = config['token_embedder']['name'].lower()
     if token_embedder_name == 'cnn':
@@ -229,21 +227,29 @@ class Model(nn.Module):
       self.encoder = ElmobiLm(config, use_cuda)
     elif encoder_name == 'lstm':
       self.encoder = LstmbiLm(config, use_cuda)
-    elif encoder_name == 'bengio03':
-      self.encoder = Bengio03biLm(config, use_cuda)
-    elif encoder_name == 'lbl':
-      self.encoder = LBLbiLm(config, use_cuda)
+    elif encoder_name == 'bengio03ver1':
+      self.encoder = Bengio03BiLmVer1(config, use_cuda)
+    elif encoder_name == 'bengio03ver2':
+      self.encoder = Bengio03BiLmVer2(config, use_cuda)
+    elif encoder_name == 'lblver1':
+      self.encoder = LBLBiLmVer1(config, use_cuda)
+    elif encoder_name == 'lblver2':
+      self.encoder = LBLBiLmVer2(config, use_cuda)
     else:
       raise ValueError('Unknown encoder name: {}'.format(encoder_name))
 
     self.output_dim = config['encoder']['projection_dim']
-    if config['classifier']['name'].lower() == 'softmax':
+    classify_layer_name = config['classifier']['name'].lower()
+    if classify_layer_name == 'softmax':
       self.classify_layer = SoftmaxLayer(self.output_dim, n_class)
-    elif config['classifier']['name'].lower() == 'cnn_softmax':
-      self.classify_layer = CNNSoftmaxLayer(self.token_embedder, self.output_dim, n_class, 
-                                       config['classifier']['n_samples'], config['classifier']['corr_dim'], use_cuda)
-    elif config['classifier']['name'].lower() == 'sampled_softmax':
+    elif classify_layer_name == 'cnn_softmax':
+      self.classify_layer = CNNSoftmaxLayer(self.token_embedder, self.output_dim, n_class,
+                                            config['classifier']['n_samples'], config['classifier']['corr_dim'],
+                                            use_cuda)
+    elif classify_layer_name == 'sampled_softmax':
       self.classify_layer = SampledSoftmaxLayer(self.output_dim, n_class, config['classifier']['n_samples'], use_cuda)
+    else:
+      raise ValueError('Unknown classify_layer: {}'.format(classify_layer_name))
 
   def forward(self, word_inp, chars_inp, mask_package):
     """
@@ -260,7 +266,7 @@ class Model(nn.Module):
       self.classify_layer.update_embedding_matrix()
 
     token_embedding = self.token_embedder(word_inp, chars_inp, (mask_package[0].size(0), mask_package[0].size(1)))
-    token_embedding = F.dropout(token_embedding, self.config['dropout'], self.training)
+    token_embedding = self.dropout(token_embedding)
 
     encoder_name = self.config['encoder']['name'].lower()
     if encoder_name == 'elmo':
@@ -270,14 +276,12 @@ class Model(nn.Module):
       # [batch_size, len, hidden_size]
     elif encoder_name == 'lstm':
       encoder_output = self.encoder(token_embedding)
-    elif encoder_name == 'bengio03':
-      encoder_output = self.encoder(token_embedding)[1]
-    elif encoder_name == 'lbl':
+    elif encoder_name in ('bengio03ver1', 'bengio03ver2', 'lblver1', 'lblver2'):
       encoder_output = self.encoder(token_embedding)[1]
     else:
       raise ValueError('Unknown encoder name: {}'.format(encoder_name))
 
-    encoder_output = F.dropout(encoder_output, self.config['dropout'], self.training)
+    encoder_output = self.dropout(encoder_output)
     forward, backward = encoder_output.split(self.output_dim, 2)
 
     word_inp = Variable(word_inp)
@@ -604,11 +608,11 @@ def train():
 
   need_grad = lambda x: x.requires_grad
   if opt.optimizer.lower() == 'adam':
-    optimizer = optim.Adam(filter(need_grad, model.parameters()), lr=opt.lr)
+    optimizer = torch.optim.Adam(filter(need_grad, model.parameters()), lr=opt.lr)
   elif opt.optimizer.lower() == 'sgd':
-    optimizer = optim.SGD(filter(need_grad, model.parameters()), lr=opt.lr)
+    optimizer = torch.optim.SGD(filter(need_grad, model.parameters()), lr=opt.lr)
   elif opt.optimizer.lower() == 'adagrad':
-    optimizer = optim.Adagrad(filter(need_grad, model.parameters()), lr=opt.lr)
+    optimizer = torch.optim.Adagrad(filter(need_grad, model.parameters()), lr=opt.lr)
   else:
     raise ValueError('Unknown optimizer {}'.format(opt.optimizer.lower()))
 

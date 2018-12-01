@@ -12,8 +12,8 @@ import torch
 from torch.autograd import Variable
 from modules.elmo import ElmobiLm
 from modules.lstm import LstmbiLm
-from modules.bengio03 import Bengio03biLm
-from modules.lbl import LBLbiLm
+from modules.bengio03 import Bengio03BiLmVer1, Bengio03BiLmVer2
+from modules.lbl import LBLBiLmVer1, LBLBiLmVer2
 from modules.token_embedder import ConvTokenEmbedder, LstmTokenEmbedder
 from modules.embedding_layer import EmbeddingLayer
 import numpy as np
@@ -168,9 +168,10 @@ def create_one_batch(x, word2id, char2id, config, oov='<oov>', pad='<pad>', sort
     batch_w = None
 
   if char2id is not None:
-    bow_id, eow_id, oov_id, pad_id = char2id.get('<eow>', None), char2id.get('<bow>', None), char2id.get(oov, None), char2id.get(pad, None)
+    bow_id, eow_id, oov_id, pad_id = (char2id.get('<eow>', None), char2id.get('<bow>', None), char2id.get(oov, None), \
+                                      char2id.get(pad, None))
 
-    assert bow_id is not None and eow_id != None and oov_id is not None and pad_id is not None
+    assert bow_id is not None and eow_id is not None and oov_id is not None and pad_id is not None
 
     if config['token_embedder']['name'].lower() == 'cnn':
       max_chars = config['token_embedder']['max_characters_per_token']
@@ -273,10 +274,14 @@ class Model(torch.nn.Module):
       self.encoder = ElmobiLm(config, use_cuda)
     elif encoder_name == 'lstm':
       self.encoder = LstmbiLm(config, use_cuda)
-    elif encoder_name == 'bengio03':
-      self.encoder = Bengio03biLm(config, use_cuda)
-    elif encoder_name == 'lbl':
-      self.encoder = LBLbiLm(config, use_cuda)
+    elif encoder_name == 'bengio03ver1':
+      self.encoder = Bengio03BiLmVer1(config, use_cuda)
+    elif encoder_name == 'bengio03ver2':
+      self.encoder = Bengio03BiLmVer2(config, use_cuda)
+    elif encoder_name == 'lblver1':
+      self.encoder = LBLBiLmVer1(config, use_cuda)
+    elif encoder_name == 'lblver2':
+      self.encoder = LBLBiLmVer2(config, use_cuda)
     else:
       raise ValueError('Unknown encoder name: {}'.format(encoder_name))
 
@@ -293,17 +298,10 @@ class Model(torch.nn.Module):
       encoder_output = torch.cat([token_embedding, encoder_output], dim=0)
     elif encoder_name == 'lstm':
       encoder_output = self.encoder(token_embedding)
-    elif encoder_name == 'bengio03':
+    elif encoder_name in ('bengio03ver1', 'bengio03ver2', 'lblver1', 'lblver2'):
       encoder_output = self.encoder(token_embedding)[0]
       sz = encoder_output.size()
-      token_embedding = torch.cat([token_embedding, token_embedding], dim=2).view(1, sz[0], sz[1], sz[2])
-      encoder_output = encoder_output.view(1, sz[0], sz[1], sz[2])
-      encoder_output = torch.cat([token_embedding, encoder_output], dim=0)
-    elif encoder_name == 'lbl':
-      encoder_output = self.encoder(token_embedding)[0]
-      sz = encoder_output.size()
-      token_embedding = torch.cat([token_embedding, token_embedding], dim=2).view(1, sz[0], sz[1], sz[2])
-      encoder_output = encoder_output.view(1, sz[0], sz[1], sz[2])
+      token_embedding = torch.cat([token_embedding, token_embedding], dim=2).view(1, sz[1], sz[2], sz[3])
       encoder_output = torch.cat([token_embedding, encoder_output], dim=0)
     else:
       raise ValueError('unknown encoder name: {}'.format(encoder_name))
@@ -329,9 +327,10 @@ def test_main():
                                                            ' like \'--output_format=hdf5,plain\'')
   cmd.add_argument("--output_prefix", help='the prefix of the output file. The output file is in the format of '
                                            '<output_prefix>.<output_layer>.<output_format>')
-  cmd.add_argument("--output_layer", help='the target layer to output. 0 for the word encoder, 1 for the first LSTM '
-                                          'hidden layer, 2 for the second LSTM hidden layer, -1 for an average'
-                                          'of 3 layers.')
+  cmd.add_argument("--output_layer", required=True,
+                   help='the target layer to output. 0 for the word encoder, 1 for the first LSTM '
+                        'hidden layer, 2 for the second LSTM hidden layer, -1 for an average '
+                        'of 3 layers.')
   cmd.add_argument("--model", required=True, help="path to save model")
   cmd.add_argument("--batch_size", "--batch", type=int, default=1, help='the batch size.')
   args = cmd.parse_args(sys.argv[2:])
@@ -407,23 +406,28 @@ def test_main():
   cnt = 0
 
   output_formats = args.output_format.split(',')
-  output_layers = map(int, args.output_layer.split(','))
+  output_layers = list(map(int, args.output_layer.split(',')))
+  if -1 in output_layers:
+    assert len(output_layers) == 1
 
   handlers = {}
   for output_format in output_formats:
     if output_format not in ('hdf5', 'txt'):
       print('Unknown output_format: {0}'.format(output_format))
       continue
-    for output_layer in output_layers:
-      filename = '{0}.ly{1}.{2}'.format(args.output_prefix, output_layer, output_format)
-      handlers[output_format, output_layer] = h5py.File(filename, 'w') if output_format == 'hdf5' else open(filename, 'w')
 
-      if output_format == 'hdf5':
-        info = np.ndarray([config['encoder']['projection_dim'], config['encoder']['n_layers']])
-        fout.create_dataset('#info', info.shape, dtype='int', data=info)
-      else:
-        print('#projection_dim: {}'.format(config['encoder']['projection_dim']), file=fout)
-        print('#n_layers: {}'.format(config['encoder']['n_layers']), file=fout)
+    filename = '{0}.ly{1}.{2}'.format(args.output_prefix, args.output_layer, output_format)
+    fout = h5py.File(filename, 'w') if output_format == 'hdf5' else open(filename, 'w')
+
+    handlers[output_format] = fout
+    dim = config['encoder']['projection_dim'] * 2
+    n_layers = len(output_layers)
+    if output_format == 'hdf5':
+      info = np.asarray([dim, n_layers])
+      fout.create_dataset('#info', info.shape, dtype='int', data=info)
+    else:
+      print('#projection_dim: {}'.format(dim), file=fout)
+      print('#n_layers: {}'.format(n_layers), file=fout)
 
   for w, c, lens, masks, texts in zip(test_w, test_c, test_lens, test_masks, test_text):
     output = model.forward(w, c, masks)
@@ -439,30 +443,20 @@ def test_main():
         data = output[i, 1:lens[i]-1, :].data
         if use_cuda:
           data = data.cpu()
-      elif encoder_name == 'elmo':
+      elif encoder_name in ('elmo', 'bengio03', 'lbl'):
         data = output[:, i, 1:lens[i]-1, :].data
-        if use_cuda:
-          data = data.cpu()
-      elif encoder_name == 'bengio03':
-        data = output[:, i, 1:lens[i] - 1, :].data
-        if use_cuda:
-          data = data.cpu()
-      elif encoder_name == 'lbl':
-        data = output[:, i, 1:lens[i] - 1, :].data
         if use_cuda:
           data = data.cpu()
       else:
         raise ValueError('unknown encoder name: {}'.format(encoder_name))
       data = data.numpy()
 
-      for (output_format, output_layer) in handlers:
-        fout = handlers[output_format, output_layer]
-        if output_layer == -1:
+      for output_format in output_formats:
+        fout = handlers[output_format]
+        if output_layers[0] == -1:
           payload = np.average(data, axis=0)
-        elif output_layer == -2:
-          payload = data
         else:
-          payload = data[output_layer]
+          payload = data[output_layers, :, :]
 
         if output_format == 'hdf5':
           fout.create_dataset(sent, payload.shape, dtype='float32', data=payload)

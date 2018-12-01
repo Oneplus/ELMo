@@ -61,7 +61,7 @@ def create_one_batch(dim, n_layers, raw_data, raw_labels, lexicon, sort=True, us
     # new_raw_items = ['<bos>'] + raw_items + ['<eos>']
     new_raw_items = raw_items
     sentence_key = '\t'.join(new_raw_items).replace('.', '$period$').replace('/', '$backslash$')
-    batch_x[i][: sorted_lens[i]] = torch.from_numpy(lexicon[sentence_key][()])
+    batch_x[i][: sorted_lens[i]] = torch.from_numpy(lexicon[sentence_key][()]).transpose(0, 1)
     for j, _ in enumerate(raw_items):
       batch_y[i][j] = sorted_raw_labels[i][j]
 
@@ -139,12 +139,12 @@ class ClassifyLayer(torch.nn.Module):
 
 
 class Model(torch.nn.Module):
-  def __init__(self, opt, n_class, use_cuda):
+  def __init__(self, opt, dim, n_layers, n_class, use_cuda):
     super(Model, self).__init__()
     self.use_cuda = use_cuda
     self.opt = opt
 
-    encoder_input_dim = opt.word_dim
+    encoder_input_dim = dim
 
     if opt.encoder.lower() == 'lstm':
       self.encoder = torch.nn.LSTM(encoder_input_dim,
@@ -155,9 +155,11 @@ class Model(torch.nn.Module):
       raise ValueError('Unknown encoder name: {}'.format(opt.encoder.lower()))
 
     if use_cuda:
-      self.weights = torch.autograd.Variable(torch.cuda.FloatTensor((opt.n_layers, 1)))
+      self.weights = torch.cuda.FloatTensor(n_layers).fill_(1./n_layers)
     else:
-      self.weights = torch.autograd.Variable(torch.FloatTensor((opt.n_layers, 1)))
+      self.weights = torch.FloatTensor(n_layers).fill_(1./n_layers)
+    self.weights = torch.autograd.Variable(self.weights, requires_grad=True)
+
     self.classify_layer = ClassifyLayer(encoder_output_dim, n_class)
     self.train_time = 0
     self.eval_time = 0
@@ -166,7 +168,7 @@ class Model(torch.nn.Module):
 
   def forward(self, x, y):
     x = torch.autograd.Variable(x, requires_grad=False)
-    x = self.weights.expand_as(x).mul(x).sum(dim=2)
+    x = x.transpose(-2, -1).matmul(self.weights)
     output, hidden = self.encoder(x)
 
     start_time = time.time()
@@ -233,7 +235,7 @@ def train_model(epoch, model, optimizer,
     cnt += 1
     model.zero_grad()
     _, loss = model.forward(x, y)
-    total_loss += loss.data[0]
+    total_loss += loss.item()
     n_tags = sum(lens)
     total_tag += n_tags
     loss.backward()
@@ -296,7 +298,6 @@ def train():
   cmd.add_argument("--batch_size", "--batch", type=int, default=32, help='the batch size.')
   cmd.add_argument("--hidden_dim", "--hidden", type=int, default=128, help='the hidden dimension.')
   cmd.add_argument("--max_epoch", type=int, default=100, help='the maximum number of iteration.')
-  cmd.add_argument("--word_dim", type=int, default=1024, help='the input dimension.')
   cmd.add_argument("--dropout", type=float, default=0.0, help='the dropout rate')
   cmd.add_argument("--depth", type=int, default=2, help='the depth of lstm')
 
@@ -328,6 +329,8 @@ def train():
 
   lexicon = h5py.File(opt.lexicon, 'r')
   dim, n_layers = lexicon['#info'][0], lexicon['#info'][1]
+  logging.info('dim: {}'.format(dim))
+  logging.info('n_layers: {}'.format(n_layers))
 
   raw_training_data, raw_training_labels = read_corpus(opt.train_path)
   raw_valid_data, raw_valid_labels = read_corpus(opt.valid_path)
@@ -368,7 +371,7 @@ def train():
   else:
     test_payload = None
 
-  model = Model(opt, n_classes, use_cuda)
+  model = Model(opt, dim, n_layers, n_classes, use_cuda)
   logging.info(str(model))
   if use_cuda:
     model = model.cuda()
@@ -405,21 +408,22 @@ def test():
   cmd.add_argument('--gpu', default=-1, type=int, help='use id of gpu, -1 if cpu.')
   cmd.add_argument("--input", help="the path to the test file.")
   cmd.add_argument('--output', help='the path to the output file.')
-  cmd.add_argument("--models", required=True, help="path to save model")
-
-  cmd.add_argument('--use_elmo', action= 'store_true', help='whether to use elmo.')
-  cmd.add_argument('--test_elmo_path', type=str, help='the path to the testing elmo.')
+  cmd.add_argument("--model", required=True, help="path to save model")
+  cmd.add_argument('--lexicon', required=True, help='the path to the hdf5 file.')
 
   args = cmd.parse_args(sys.argv[2:])
 
   if args.gpu >= 0:
     torch.cuda.set_device(args.gpu)
-  
-  models_path = args.models.split(',') 
 
-  print(models_path)
+  lexicon = h5py.File(opt.lexicon, 'r')
+  dim, n_layers = lexicon['#info'][0], lexicon['#info'][1]
+  logging.info('dim: {}'.format(dim))
+  logging.info('n_layers: {}'.format(n_layers))
 
-  args2 = dict2namedtuple(json.load(codecs.open(os.path.join(models_path[0], 'config.json'), 'r', encoding='utf-8')))
+  model_path = args.model
+
+  args2 = dict2namedtuple(json.load(codecs.open(os.path.join(model_path, 'config.json'), 'r', encoding='utf-8')))
 
   label2id, id2label = {}, {}
   with codecs.open(os.path.join(models_path[0], 'label.dic'), 'r', encoding='utf-8') as fpi:
@@ -431,34 +435,29 @@ def test():
 
   use_cuda = args.gpu >= 0 and torch.cuda.is_available()
   
-  models = []
+  model = Model(args2, dim, n_layers, len(label2id), use_cuda)
+  if use_cuda:
+    model = model.cuda()
 
-  for idx, path in enumerate(models_path):
-    models.append(Model(args2, len(label2id), use_cuda))
-    models[-1].load_state_dict(torch.load(os.path.join(path, 'model.pkl'), map_location=lambda storage, loc: storage))
-    if use_cuda:
-      models[-1] = models[-1].cuda()
-    
-  test_x, test_y = read_corpus(args.input)
-  label_to_index(test_y, label2id, incremental=False)
+  raw_test_data, raw_test_labels = read_corpus(args.input)
+  label_to_index(raw_test_labels, label2id, incremental=False)
 
-  test_x, test_y, test_lens = create_batches(test_x, test_y,  shuffle=False, sort=False, use_cuda=use_cuda)
+  test_data, test_labels, test_lens = create_batches(dim, n_layers, raw_test_data, raw_test_labels, lexicon,
+                                                     shuffle=False, sort=False, use_cuda=use_cuda)
 
   if args.output is not None:
     fpo = codecs.open(args.output, 'w', encoding='utf-8')
   else:
     fpo = codecs.getwriter('utf-8')(sys.stdout)
 
-  for model in models:
-    model.eval()
-
-  for x, c, e, cluster, y, lens, text in zip(test_x, test_c, test_e, test_cluster, test_y, test_lens, test_text):
-    output, loss = ensemble_model.forward(x, c, e, cluster, y)
+  model.eval()
+  for x, y, lens in zip(test_data, test_labels, test_lens):
+    output, loss = model.forward(x, y)
     output_data = output.data
     for bid in range(len(x)):
-      for k, (word, tag) in enumerate(zip(text[bid], output_data[bid])):
-        tag = id2label[int(tag)]
-        print('{0}\t{1}\t{1}\t{2}\t{2}\t_\t_\t_'.format(k + 1, word, tag), file=fpo)
+      for k in range(lens[bid]):
+        tag = id2label[int(output_data[bid][k])]
+        print(tag, file=fpo)
       print(file=fpo)
   fpo.close()
 

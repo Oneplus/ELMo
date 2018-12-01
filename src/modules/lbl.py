@@ -13,6 +13,7 @@ class LBLBiLmVer1(torch.nn.Module):
     self.config = config
     self.use_cuda = use_cuda
     self.use_position = config['encoder'].get('position', False)
+    self.num_layers = config['encoder']['n_layers']
 
     self.dropout = torch.nn.Dropout(self.config['dropout'])
     self.activation = torch.nn.ReLU()
@@ -35,8 +36,8 @@ class LBLBiLmVer1(torch.nn.Module):
     if self.use_position:
       self.position = PositionalEncoding(config['encoder']['projection_dim'], self.config['dropout'])
 
-    self.left_block = Highway(hidden_size)
-    self.right_block = Highway(hidden_size)
+    self.left_block = Highway(hidden_size, num_layers=self.num_layers)
+    self.right_block = Highway(hidden_size, num_layers=self.num_layers)
 
     self.input_size = input_size
     self.width = width

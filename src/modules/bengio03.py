@@ -13,6 +13,7 @@ class Bengio03BiLmVer1(torch.nn.Module):
     self.config = config
     self.use_cuda = use_cuda
     self.use_position = config['encoder'].get('position', False)
+    self.num_layers = config['encoder']['n_layers']
 
     self.dropout = torch.nn.Dropout(self.config['dropout'])
     self.activation = torch.nn.ReLU()
@@ -33,8 +34,8 @@ class Bengio03BiLmVer1(torch.nn.Module):
 
     self.left_project = torch.nn.Linear(input_size, hidden_size)
     self.right_project = torch.nn.Linear(input_size, hidden_size)
-    self.left_highway = Highway(hidden_size)
-    self.right_highway = Highway(hidden_size)
+    self.left_highway = Highway(hidden_size, num_layers=self.num_layers)
+    self.right_highway = Highway(hidden_size, num_layers=self.num_layers)
 
     self.input_size = input_size
     self.width = width

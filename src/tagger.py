@@ -394,7 +394,7 @@ def train():
   use_cuda = opt.gpu >= 0 and torch.cuda.is_available()
 
   lexicon = h5py.File(opt.lexicon, 'r')
-  dim, n_layers = lexicon['#info'][0], lexicon['#info'][1]
+  dim, n_layers = lexicon['#info'][0].item(), lexicon['#info'][1].item()
   logging.info('dim: {}'.format(dim))
   logging.info('n_layers: {}'.format(n_layers))
 
@@ -511,7 +511,7 @@ def test():
     torch.cuda.set_device(args.gpu)
 
   lexicon = h5py.File(args.lexicon, 'r')
-  dim, n_layers = lexicon['#info'][0], lexicon['#info'][1]
+  dim, n_layers = lexicon['#info'][0].item(), lexicon['#info'][1].item()
   logging.info('dim: {}'.format(dim))
   logging.info('n_layers: {}'.format(n_layers))
 

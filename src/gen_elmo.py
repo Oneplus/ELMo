@@ -443,7 +443,7 @@ def test_main():
         data = output[i, 1:lens[i]-1, :].data
         if use_cuda:
           data = data.cpu()
-      elif encoder_name in ('elmo', 'bengio03', 'lbl'):
+      elif encoder_name in ('elmo', 'bengio03ver1', 'bengio03ver2', 'lblver1', 'lblver2'):
         data = output[:, i, 1:lens[i]-1, :].data
         if use_cuda:
           data = data.cpu()

@@ -1,7 +1,8 @@
 {
 	"encoder": {
 		"name": "bengio03ver1",
-		"projection_dim": 512, 
+		"projection_dim": 512,
+        "n_layers": 2,
         "width": 8
   	},
 

@@ -1,6 +1,6 @@
 {
 	"encoder": {
-		"name": "bengio03ver2",
+		"name": "bengio03resnet",
 		"projection_dim": 512, 
 		"n_layers": 2,
         "width": 8

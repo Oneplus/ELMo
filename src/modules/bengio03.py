@@ -7,9 +7,9 @@ from .positionwise_feedforward import PositionwiseFeedForward
 from .sublayer_connection import SublayerConnection
 
 
-class Bengio03BiLmVer1(torch.nn.Module):
+class Bengio03HighwayBiLm(torch.nn.Module):
   def __init__(self, config, use_cuda=False):
-    super(Bengio03BiLmVer1, self).__init__()
+    super(Bengio03HighwayBiLm, self).__init__()
     self.config = config
     self.use_cuda = use_cuda
     self.use_position = config['encoder'].get('position', False)
@@ -79,9 +79,9 @@ class Bengio03BiLmVer1(torch.nn.Module):
     return torch.stack(all_layers_along_steps, dim=2), torch.stack(last_layer_along_steps, dim=1)
 
 
-class Bengio03BiLmVer2(torch.nn.Module):
+class Bengio03ResNetBiLm(torch.nn.Module):
   def __init__(self, config, use_cuda=False):
-    super(Bengio03BiLmVer2, self).__init__()
+    super(Bengio03ResNetBiLm, self).__init__()
     self.config = config
     self.use_cuda = use_cuda
     self.use_position = config['encoder'].get('position', False)

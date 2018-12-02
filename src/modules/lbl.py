@@ -7,9 +7,9 @@ from .sublayer_connection import SublayerConnection
 from .positionwise_feedforward import PositionwiseFeedForward
 
 
-class LBLBiLmVer1(torch.nn.Module):
+class LBLHighwayBiLm(torch.nn.Module):
   def __init__(self, config, use_cuda=False):
-    super(LBLBiLmVer1, self).__init__()
+    super(LBLHighwayBiLm, self).__init__()
     self.config = config
     self.use_cuda = use_cuda
     self.use_position = config['encoder'].get('position', False)
@@ -69,9 +69,9 @@ class LBLBiLmVer1(torch.nn.Module):
     return torch.stack(all_layers_along_steps, dim=2), torch.stack(last_layer_along_steps, dim=1)
 
 
-class LBLBiLmVer2(torch.nn.Module):
+class LBLResNetBiLm(torch.nn.Module):
   def __init__(self, config, use_cuda=False):
-    super(LBLBiLmVer2, self).__init__()
+    super(LBLResNetBiLm, self).__init__()
     self.config = config
     self.use_cuda = use_cuda
     self.use_position = config['encoder'].get('position', False)

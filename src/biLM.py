@@ -12,11 +12,11 @@ import logging
 import json
 import torch
 import collections
-from torch.autograd import Variable
+import shutil
 from modules.elmo import ElmobiLm
 from modules.lstm import LstmbiLm
-from modules.bengio03 import Bengio03BiLmVer1, Bengio03BiLmVer2
-from modules.lbl import LBLBiLmVer1, LBLBiLmVer2
+from modules.bengio03 import Bengio03HighwayBiLm, Bengio03ResNetBiLm
+from modules.lbl import LBLHighwayBiLm, LBLResNetBiLm
 from modules.token_embedder import ConvTokenEmbedder, LstmTokenEmbedder
 from modules.embedding_layer import EmbeddingLayer
 from modules.classify_layer import SoftmaxLayer, CNNSoftmaxLayer, SampledSoftmaxLayer
@@ -227,14 +227,14 @@ class Model(torch.nn.Module):
       self.encoder = ElmobiLm(config, use_cuda)
     elif encoder_name == 'lstm':
       self.encoder = LstmbiLm(config, use_cuda)
-    elif encoder_name == 'bengio03ver1':
-      self.encoder = Bengio03BiLmVer1(config, use_cuda)
-    elif encoder_name == 'bengio03ver2':
-      self.encoder = Bengio03BiLmVer2(config, use_cuda)
-    elif encoder_name == 'lblver1':
-      self.encoder = LBLBiLmVer1(config, use_cuda)
-    elif encoder_name == 'lblver2':
-      self.encoder = LBLBiLmVer2(config, use_cuda)
+    elif encoder_name == 'bengio03highway':
+      self.encoder = Bengio03HighwayBiLm(config, use_cuda)
+    elif encoder_name == 'bengio03resnet':
+      self.encoder = Bengio03ResNetBiLm(config, use_cuda)
+    elif encoder_name == 'lblhighway':
+      self.encoder = LBLHighwayBiLm(config, use_cuda)
+    elif encoder_name == 'lblresnet':
+      self.encoder = LBLResNetBiLm(config, use_cuda)
     else:
       raise ValueError('Unknown encoder name: {}'.format(encoder_name))
 
@@ -270,13 +270,14 @@ class Model(torch.nn.Module):
 
     encoder_name = self.config['encoder']['name'].lower()
     if encoder_name == 'elmo':
-      mask = Variable(mask_package[0].cuda()).cuda() if self.use_cuda else Variable(mask_package[0])
+      mask = torch.autograd.Variable(mask_package[0].cuda()).cuda() if self.use_cuda else \
+        torch.autograd.Variable(mask_package[0])
       encoder_output = self.encoder(token_embedding, mask)
       encoder_output = encoder_output[1]
       # [batch_size, len, hidden_size]
     elif encoder_name == 'lstm':
       encoder_output = self.encoder(token_embedding)
-    elif encoder_name in ('bengio03ver1', 'bengio03ver2', 'lblver1', 'lblver2'):
+    elif encoder_name in ('bengio03highway', 'bengio03resnet', 'lblhighway', 'lblresnet'):
       encoder_output = self.encoder(token_embedding)[1]
     else:
       raise ValueError('Unknown encoder name: {}'.format(encoder_name))
@@ -284,12 +285,14 @@ class Model(torch.nn.Module):
     encoder_output = self.dropout(encoder_output)
     forward, backward = encoder_output.split(self.output_dim, 2)
 
-    word_inp = Variable(word_inp)
+    word_inp = torch.autograd.Variable(word_inp)
     if self.use_cuda:
       word_inp = word_inp.cuda()
 
-    mask1 = Variable(mask_package[1].cuda()).cuda() if self.use_cuda else Variable(mask_package[1])
-    mask2 = Variable(mask_package[2].cuda()).cuda() if self.use_cuda else Variable(mask_package[2])
+    mask1 = torch.autograd.Variable(mask_package[1].cuda()).cuda() if self.use_cuda else \
+      torch.autograd.Variable(mask_package[1])
+    mask2 = torch.autograd.Variable(mask_package[2].cuda()).cuda() if self.use_cuda else \
+      torch.autograd.Variable(mask_package[2])
 
     forward_x = forward.contiguous().view(-1, self.output_dim).index_select(0, mask1)
     forward_y = word_inp.contiguous().view(-1).index_select(0, mask2)
@@ -631,6 +634,9 @@ def train():
     for w, i in word_lexicon.items():
       print('{0}\t{1}'.format(w, i), file=fpo)
 
+  new_config_path = os.path.join(opt.model, os.path.basename(opt.config_path))
+  shutil.copy(opt.config_path, new_config_path)
+  opt.config_path = new_config_path
   json.dump(vars(opt), codecs.open(os.path.join(opt.model, 'config.json'), 'w', encoding='utf-8'))
 
   best_train = 1e+8

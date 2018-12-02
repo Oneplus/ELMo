@@ -1,6 +1,6 @@
 {
 	"encoder": {
-		"name": "bengio03ver1",
+		"name": "bengio03highway",
 		"projection_dim": 512,
         "n_layers": 2,
         "width": 8

@@ -273,13 +273,13 @@ class Model(torch.nn.Module):
       self.encoder = ElmobiLm(config, use_cuda)
     elif encoder_name == 'lstm':
       self.encoder = LstmbiLm(config, use_cuda)
-    elif encoder_name == 'bengio03_highway':
+    elif encoder_name == 'bengio03highway':
       self.encoder = Bengio03HighwayBiLm(config, use_cuda)
-    elif encoder_name == 'bengio03_resnet':
+    elif encoder_name == 'bengio03resnet':
       self.encoder = Bengio03ResNetBiLm(config, use_cuda)
-    elif encoder_name == 'lbl_highway':
+    elif encoder_name == 'lblhighway':
       self.encoder = LBLHighwayBiLm(config, use_cuda)
-    elif encoder_name == 'lbl_resnet':
+    elif encoder_name == 'lblresnet':
       self.encoder = LBLResNetBiLm(config, use_cuda)
     else:
       raise ValueError('Unknown encoder name: {}'.format(encoder_name))
@@ -298,7 +298,7 @@ class Model(torch.nn.Module):
       encoder_output = torch.cat([token_embedding, encoder_output], dim=0)
     elif encoder_name == 'lstm':
       encoder_output = self.encoder(token_embedding)
-    elif encoder_name in ('bengio03_highway', 'bengio03_resnet', 'lbl_highway', 'lbl_resnet'):
+    elif encoder_name in ('bengio03highway', 'bengio03resnet', 'lblhighway', 'lblresnet'):
       encoder_output = self.encoder(token_embedding)[0]
       sz = encoder_output.size()
       token_embedding = torch.cat([token_embedding, token_embedding], dim=2).view(1, sz[1], sz[2], sz[3])

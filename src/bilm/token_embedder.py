@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 import copy
-from .highway import Highway
+from modules.highway import Highway
 
 
 class LstmTokenEmbedder(nn.Module):

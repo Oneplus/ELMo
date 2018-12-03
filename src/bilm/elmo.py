@@ -1,15 +1,11 @@
-from typing import Optional, Tuple, List, Callable, Union
+from typing import Optional, Tuple, List, Union
 
-import h5py
-import numpy
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.nn.utils.rnn import PackedSequence, pad_packed_sequence, pack_padded_sequence
+from torch.nn.utils.rnn import PackedSequence, pad_packed_sequence
 from torch.autograd import Variable
 
-from .encoder_base import _EncoderBase
-from .lstm_cell_with_projection import LstmCellWithProjection
+from bilm.encoder_base import _EncoderBase
+from modules.lstm_cell_with_projection import LstmCellWithProjection
 
 RnnState = Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]  # pylint: disable=invalid-name
 RnnStateStorage = Tuple[torch.Tensor, ...]  # pylint: disable=invalid-name

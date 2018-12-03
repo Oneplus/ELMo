@@ -15,7 +15,7 @@ import collections
 import torch
 import subprocess
 import h5py
-from seqlabel.embed_layer import EmbeddingLayer
+from modules.embedding_layer import EmbeddingLayer
 from seqlabel.crf_layer import CRFLayer
 logging.basicConfig(level=logging.INFO, format='%(asctime)-15s %(levelname)s: %(message)s')
 
@@ -306,7 +306,7 @@ def train():
   cmd.add_argument("--l2", type=float, default=0.00001, help='the l2 decay rate.')
   cmd.add_argument("--lr", type=float, default=0.01, help='the learning rate.')
   cmd.add_argument("--lr_decay", type=float, default=0, help='the learning rate decay.')
-  cmd.add_argument("--clip_grad", type=float, default=5, help='the tense of clipped grad.')
+  cmd.add_argument("--clip_grad", type=float, default=1, help='the tense of clipped grad.')
   cmd.add_argument('--output', help='The path to the output file.')
   cmd.add_argument("--script", required=True, help="The path to the evaluation script")
 

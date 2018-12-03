@@ -13,11 +13,11 @@ import json
 import torch
 import collections
 import shutil
-from modules.elmo import ElmobiLm
-from modules.lstm import LstmbiLm
-from modules.bengio03 import Bengio03HighwayBiLm, Bengio03ResNetBiLm
-from modules.lbl import LBLHighwayBiLm, LBLResNetBiLm
-from modules.token_embedder import ConvTokenEmbedder, LstmTokenEmbedder
+from bilm.elmo import ElmobiLm
+from bilm.lstm import LstmbiLm
+from bilm.bengio03 import Bengio03HighwayBiLm, Bengio03ResNetBiLm
+from bilm.lbl import LBLHighwayBiLm, LBLResNetBiLm
+from bilm.token_embedder import ConvTokenEmbedder, LstmTokenEmbedder
 from modules.embedding_layer import EmbeddingLayer
 from modules.classify_layer import SoftmaxLayer, CNNSoftmaxLayer, SampledSoftmaxLayer
 from dataloader import load_embedding

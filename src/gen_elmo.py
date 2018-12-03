@@ -9,11 +9,11 @@ import random
 import logging
 import json
 import torch
-from modules.elmo import ElmobiLm
-from modules.lstm import LstmbiLm
-from modules.bengio03 import Bengio03HighwayBiLm, Bengio03ResNetBiLm
-from modules.lbl import LBLHighwayBiLm, LBLResNetBiLm
-from modules.token_embedder import ConvTokenEmbedder, LstmTokenEmbedder
+from bilm.elmo import ElmobiLm
+from bilm.lstm import LstmbiLm
+from bilm.bengio03 import Bengio03HighwayBiLm, Bengio03ResNetBiLm
+from bilm.lbl import LBLHighwayBiLm, LBLResNetBiLm
+from bilm.token_embedder import ConvTokenEmbedder, LstmTokenEmbedder
 from modules.embedding_layer import EmbeddingLayer
 import numpy as np
 import h5py

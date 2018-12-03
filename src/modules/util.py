@@ -123,7 +123,8 @@ def get_dropout_mask(dropout_probability: float, tensor_for_masking: torch.autog
     # Scale mask by 1/keep_prob to preserve output statistics.
     dropout_mask = binary_mask.float().div(1.0 - dropout_probability)
     return dropout_mask
-    
+
+
 def block_orthogonal(tensor: torch.Tensor,
                      split_sizes: List[int],
                      gain: float = 1.0) -> None:

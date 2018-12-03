@@ -15,6 +15,7 @@ import tempfile
 import collections
 import torch
 import subprocess
+from modules.gal_lstm import GalLSTM
 from seqlabel.crf_layer import CRFLayer
 logging.basicConfig(level=logging.INFO, format='%(asctime)-15s %(levelname)s: %(message)s')
 
@@ -126,6 +127,11 @@ class Model(torch.nn.Module):
                                    opt.hidden_dim, num_layers=opt.depth, bidirectional=True,
                                    batch_first=True, dropout=opt.dropout)
       encoder_output_dim = opt.hidden_dim * 2
+    elif opt.encoder.lower() == 'gal_lstm':
+      self.encoder = GalLSTM(encoder_input_dim, opt.hidden_dim, num_layers=opt.depth,
+                             bidirectional=True,
+                             wdrop=opt.dropout, idrop=opt.dropout, batch_first=True)
+      encoder_output_dim = opt.hidden_dim * 2
     else:
       raise ValueError('Unknown encoder name: {}'.format(opt.encoder.lower()))
 
@@ -135,6 +141,7 @@ class Model(torch.nn.Module):
       self.weights = torch.FloatTensor(n_layers).fill_(1./n_layers)
     self.weights = torch.autograd.Variable(self.weights, requires_grad=True)
 
+    # CRF: as suggested by Reimers and Gurevych [2017]
     self.classify_layer = CRFLayer(encoder_output_dim, n_class, use_cuda)
     self.train_time = 0
     self.eval_time = 0
@@ -257,8 +264,8 @@ def train():
   cmd = argparse.ArgumentParser(sys.argv[0], conflict_handler='resolve')
   cmd.add_argument('--seed', default=1, type=int, help='the random seed.')
   cmd.add_argument('--gpu', default=-1, type=int, help='use id of gpu, -1 if cpu.')
-  cmd.add_argument('--encoder', default='lstm', choices=['lstm'],
-                   help='the type of encoder: valid options=[lstm]')
+  cmd.add_argument('--encoder', default='gal_lstm', choices=['lstm', 'gal_lstm'],
+                   help='the type of encoder: valid options=[lstm, gal_lstm]')
   cmd.add_argument('--optimizer', default='sgd', choices=['sgd', 'adam'],
                    help='the type of optimizer: valid options=[sgd, adam]')
   cmd.add_argument('--train_path', required=True, help='the path to the training file.')

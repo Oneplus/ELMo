@@ -135,7 +135,7 @@ class Model(torch.nn.Module):
       self.weights = torch.FloatTensor(n_layers).fill_(1./n_layers)
     self.weights = torch.autograd.Variable(self.weights, requires_grad=True)
 
-    self.classify_layer = CRFLayer(encoder_output_dim, n_class)
+    self.classify_layer = CRFLayer(encoder_output_dim, n_class, use_cuda)
     self.train_time = 0
     self.eval_time = 0
     self.emb_time = 0
@@ -214,6 +214,8 @@ def train_model(epoch, model, optimizer,
     n_tags = sum(lens)
     total_tag += n_tags
     loss.backward()
+
+    # gradient normalization: as suggested by Reimers and Gurevych [2017]
     torch.nn.utils.clip_grad_norm_(model.parameters(), opt.clip_grad)
     optimizer.step()
 
@@ -257,8 +259,6 @@ def train():
   cmd.add_argument('--gpu', default=-1, type=int, help='use id of gpu, -1 if cpu.')
   cmd.add_argument('--encoder', default='lstm', choices=['lstm'],
                    help='the type of encoder: valid options=[lstm]')
-  cmd.add_argument('--classifier', default='vanilla', choices=['vanilla', 'crf'],
-                   help='The type of classifier: valid options=[vanilla, crf]')
   cmd.add_argument('--optimizer', default='sgd', choices=['sgd', 'adam'],
                    help='the type of optimizer: valid options=[sgd, adam]')
   cmd.add_argument('--train_path', required=True, help='the path to the training file.')
@@ -280,7 +280,7 @@ def train():
   cmd.add_argument("--l2", type=float, default=0.00001, help='the l2 decay rate.')
   cmd.add_argument("--lr", type=float, default=0.01, help='the learning rate.')
   cmd.add_argument("--lr_decay", type=float, default=0, help='the learning rate decay.')
-  cmd.add_argument("--clip_grad", type=float, default=5, help='the tense of clipped grad.')
+  cmd.add_argument("--clip_grad", type=float, default=1, help='the tense of clipped grad.')
   cmd.add_argument('--output', help='The path to the output file.')
   cmd.add_argument("--script", required=True, help="The path to the evaluation script")
 

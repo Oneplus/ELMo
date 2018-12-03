@@ -380,12 +380,12 @@ def train():
     opt.eval_steps = len(training_payload[0])
 
   valid_payload = create_batches(dim, n_layers, raw_valid_data, raw_valid_labels,
-                                 lexicon, word2id, opt.batch_size, shuffle=False, sort=False,
+                                 lexicon, word2id, 1, shuffle=False, sort=False,
                                  use_cuda=use_cuda)
 
   if opt.test_path is not None:
     test_payload = create_batches(dim, n_layers, raw_test_data, raw_test_labels,
-                                  lexicon, word2id, opt.batch_size, shuffle=False, sort=False,
+                                  lexicon, word2id, 1, shuffle=False, sort=False,
                                   use_cuda=use_cuda)
   else:
     test_payload = None

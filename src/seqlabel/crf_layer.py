@@ -12,7 +12,7 @@ class CRFLayer(torch.nn.Module):
     self.use_cuda = use_cuda
 
     self.transitions = torch.nn.Parameter(torch.FloatTensor(num_tags, num_tags))
-    torch.nn.init.uniform(self.transitions, -0.1, 0.1)
+    torch.nn.init.uniform_(self.transitions, -0.1, 0.1)
 
   def forward(self, x, y):
     emissions = self.hidden2tag(x)

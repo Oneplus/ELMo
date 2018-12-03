@@ -11,7 +11,7 @@ class LockedDropout(torch.nn.Module):
     if not self.training or not self.dropout:
       return x
     if self.batch_first:
-      m = x.data.new(x.size(0), 1, x.size(2)).bernouili_(1 - self.dropout)
+      m = x.data.new(x.size(0), 1, x.size(2)).bernoulli_(1 - self.dropout)
     else:
       m = x.data.new(1, x.size(1), x.size(2)).bernoulli_(1 - self.dropout)
     mask = torch.autograd.Variable(m, requires_grad=False) / (1 - self.dropout)

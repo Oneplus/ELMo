@@ -115,6 +115,9 @@ class SelfAttentiveLBLBiLM(torch.nn.Module):
 
     left_mask = local_mask(new_inputs.size(-2), self.width)
     right_mask = local_mask(new_inputs.size(-2), self.width, left_to_right=False)
+    if self.use_cuda:
+      left_mask = left_mask.cuda()
+      right_mask = right_mask.cuda()
 
     new_left_inputs = self.left_attn(new_inputs, new_inputs, new_inputs, left_mask)
     new_right_inputs = self.right_attn(new_inputs, new_inputs, new_inputs, right_mask)

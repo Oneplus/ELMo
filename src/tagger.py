@@ -279,7 +279,7 @@ def train():
   cmd = argparse.ArgumentParser(sys.argv[0], conflict_handler='resolve')
   cmd.add_argument('--seed', default=1, type=int, help='the random seed.')
   cmd.add_argument('--gpu', default=-1, type=int, help='use id of gpu, -1 if cpu.')
-  cmd.add_argument('--encoder', default='lstm', choices=['lstm'],
+  cmd.add_argument('--encoder', default='gal_lstm', choices=['lstm', 'gal_lstm'],
                    help='the type of encoder: valid options=[lstm]')
   cmd.add_argument('--optimizer', default='sgd', choices=['sgd', 'adam'],
                    help='the type of optimizer: valid options=[sgd, adam]')

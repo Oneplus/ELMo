@@ -446,7 +446,7 @@ def test_main():
         data = output[i, 1:lens[i]-1, :].data
         if use_cuda:
           data = data.cpu()
-      elif encoder_name in ('elmo', 'bengio03highway', 'bengio03resnet', 'lblhighway', 'lblresnet'):
+      elif encoder_name in ('elmo', 'bengio03highway', 'bengio03resnet', 'lblhighway', 'lblresnet', 'selfattn'):
         data = output[:, i, 1:lens[i]-1, :].data
         if use_cuda:
           data = data.cpu()

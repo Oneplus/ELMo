@@ -80,8 +80,8 @@ class SelfAttentiveLBLBiLM(torch.nn.Module):
     self.use_position = config['encoder'].get('position', False)
     self.num_layers = config['encoder']['n_layers']
 
-    self.left_attn = MultiHeadedAttention(64, config['encoder']['projection_dim'])
-    self.right_attn = MultiHeadedAttention(64, config['encoder']['projection_dim'])
+    self.left_attn = MultiHeadedAttention(64, config['encoder']['projection_dim'], config['dropout'])
+    self.right_attn = MultiHeadedAttention(64, config['encoder']['projection_dim'], config['dropout'])
     self.dropout = torch.nn.Dropout(self.config['dropout'])
     self.activation = torch.nn.ReLU()
 

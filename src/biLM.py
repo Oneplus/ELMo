@@ -17,6 +17,7 @@ from bilm.elmo import ElmobiLm
 from bilm.lstm import LstmbiLm
 from bilm.bengio03 import Bengio03HighwayBiLm, Bengio03ResNetBiLm
 from bilm.lbl import LBLHighwayBiLm, LBLResNetBiLm
+from bilm.self_attn import SelfAttentiveLBLBiLM
 from bilm.token_embedder import ConvTokenEmbedder, LstmTokenEmbedder
 from modules.embedding_layer import EmbeddingLayer
 from modules.classify_layer import SoftmaxLayer, CNNSoftmaxLayer, SampledSoftmaxLayer
@@ -235,6 +236,8 @@ class Model(torch.nn.Module):
       self.encoder = LBLHighwayBiLm(config, use_cuda)
     elif encoder_name == 'lblresnet':
       self.encoder = LBLResNetBiLm(config, use_cuda)
+    elif encoder_name == 'selfattn':
+      self.encoder = SelfAttentiveLBLBiLM(config, use_cuda)
     else:
       raise ValueError('Unknown encoder name: {}'.format(encoder_name))
 
@@ -277,7 +280,7 @@ class Model(torch.nn.Module):
       # [batch_size, len, hidden_size]
     elif encoder_name == 'lstm':
       encoder_output = self.encoder(token_embedding)
-    elif encoder_name in ('bengio03highway', 'bengio03resnet', 'lblhighway', 'lblresnet'):
+    elif encoder_name in ('bengio03highway', 'bengio03resnet', 'lblhighway', 'lblresnet', 'selfattn'):
       encoder_output = self.encoder(token_embedding)[1]
     else:
       raise ValueError('Unknown encoder name: {}'.format(encoder_name))

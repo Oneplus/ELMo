@@ -15,6 +15,7 @@ import collections
 import torch
 import subprocess
 import h5py
+from modules.gal_lstm import GalLSTM
 from modules.embedding_layer import EmbeddingLayer
 from seqlabel.crf_layer import CRFLayer
 logging.basicConfig(level=logging.INFO, format='%(asctime)-15s %(levelname)s: %(message)s')
@@ -130,14 +131,17 @@ class Model(torch.nn.Module):
     self.use_cuda = use_cuda
     self.opt = opt
     self.word_emb_layer = word_emb_layer
-    self.proj = torch.nn.Linear(dim, opt.word_dim)
     self.dropout = torch.nn.Dropout(p=opt.dropout)
     self.activation = torch.nn.ReLU()
 
     if opt.encoder.lower() == 'lstm':
-      self.encoder = torch.nn.LSTM(opt.word_dim, opt.hidden_dim,
+      self.encoder = torch.nn.LSTM(opt.word_dim + dim, opt.hidden_dim,
                                    num_layers=opt.depth, bidirectional=True,
                                    batch_first=True, dropout=opt.dropout)
+    elif opt.encoder.lower() == 'gal_lstm':
+      self.encoder = GalLSTM(opt.word_dim + dim, opt.hidden_dim, num_layers=opt.depth,
+                             bidirectional=True,
+                             wdrop=opt.dropout, idrop=opt.dropout, batch_first=True)
     else:
       raise ValueError('Unknown encoder name: {}'.format(opt.encoder.lower()))
 
@@ -160,7 +164,8 @@ class Model(torch.nn.Module):
     x = self.word_emb_layer(torch.autograd.Variable(x).cuda() if self.use_cuda
                             else torch.autograd.Variable(x))
 
-    x = x + self.dropout(self.activation(self.proj(p)))
+    x = torch.cat([x, p], dim=-1)
+    x = self.dropout(x)
 
     output, hidden = self.encoder(x)
     start_time = time.time()
@@ -282,18 +287,8 @@ def train():
   cmd.add_argument('--valid_path', required=True, help='the path to the validation file.')
   cmd.add_argument('--test_path', required=False, help='the path to the testing file.')
   cmd.add_argument('--lexicon', required=True, help='the path to the hdf5 file.')
-
   cmd.add_argument('--gold_valid_path', type=str, help='the path to the validation file.')
   cmd.add_argument('--gold_test_path', type=str, help='the path to the testing file.')
-
-  cmd.add_argument('--use_elmo', action='store_true', help='whether to use elmo.')
-  cmd.add_argument('--train_elmo_path', type=str, help='the path to the train elmo.')
-  cmd.add_argument('--valid_elmo_path', type=str, help='the path to the validation elmo.')
-  cmd.add_argument('--test_elmo_path', type=str, help='the path to the testing elmo.')
-
-  cmd.add_argument('--use_cluster', action='store_true', help='whether to use brown cluster.')
-  cmd.add_argument('--cluster_path', type=str, help='the path to the brown cluster.')
-
   cmd.add_argument("--model", required=True, help="path to save model")
   cmd.add_argument("--batch_size", "--batch", type=int, default=32, help='the batch size.')
   cmd.add_argument("--hidden_dim", "--hidden", type=int, default=128, help='the hidden dimension.')
@@ -301,7 +296,7 @@ def train():
   cmd.add_argument("--word_dim", type=int, default=128, help='the input dimension.')
   cmd.add_argument("--dropout", type=float, default=0.0, help='the dropout rate')
   cmd.add_argument("--depth", type=int, default=2, help='the depth of lstm')
-
+  cmd.add_argument("--word_cut", type=int, default=5, help='remove the words that is less frequent than')
   cmd.add_argument("--eval_steps", type=int, help='eval every x batches')
   cmd.add_argument("--l2", type=float, default=0.00001, help='the l2 decay rate.')
   cmd.add_argument("--lr", type=float, default=0.01, help='the learning rate.')
@@ -354,11 +349,15 @@ def train():
 
   logging.info('number of tags: {0}'.format(len(label_to_ix)))
 
-  word_lexicon = {}
+  word_count = collections.Counter()
   for x in raw_training_data:
     for w in x:
-      if w not in word_lexicon:
-        word_lexicon[w] = len(word_lexicon)
+      word_count[w] += 1
+
+  word_lexicon = {}
+  for w in word_count:
+    if word_count[w] >= opt.word_cut:
+      word_lexicon[w] = len(word_lexicon)
 
   for special_word in ['<oov>', '<pad>']:
     if special_word not in word_lexicon:

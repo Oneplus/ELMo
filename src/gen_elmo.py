@@ -13,6 +13,7 @@ from bilm.elmo import ElmobiLm
 from bilm.lstm import LstmbiLm
 from bilm.bengio03 import Bengio03HighwayBiLm, Bengio03ResNetBiLm
 from bilm.lbl import LBLHighwayBiLm, LBLResNetBiLm
+from bilm.self_attn import SelfAttentiveLBLBiLM
 from bilm.token_embedder import ConvTokenEmbedder, LstmTokenEmbedder
 from modules.embedding_layer import EmbeddingLayer
 import numpy as np
@@ -281,6 +282,8 @@ class Model(torch.nn.Module):
       self.encoder = LBLHighwayBiLm(config, use_cuda)
     elif encoder_name == 'lblresnet':
       self.encoder = LBLResNetBiLm(config, use_cuda)
+    elif encoder_name == 'selfattn':
+      self.encoder = SelfAttentiveLBLBiLM(config, use_cuda)
     else:
       raise ValueError('Unknown encoder name: {}'.format(encoder_name))
 
@@ -298,7 +301,7 @@ class Model(torch.nn.Module):
       encoder_output = torch.cat([token_embedding, encoder_output], dim=0)
     elif encoder_name == 'lstm':
       encoder_output = self.encoder(token_embedding)
-    elif encoder_name in ('bengio03highway', 'bengio03resnet', 'lblhighway', 'lblresnet'):
+    elif encoder_name in ('bengio03highway', 'bengio03resnet', 'lblhighway', 'lblresnet', 'selfattn'):
       encoder_output = self.encoder(token_embedding)[0]
       sz = encoder_output.size()
       token_embedding = torch.cat([token_embedding, token_embedding], dim=2).view(1, sz[1], sz[2], sz[3])

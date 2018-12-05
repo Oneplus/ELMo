@@ -76,7 +76,7 @@ def create_one_batch(dim, n_layers, raw_data, raw_labels, lexicon, sort=True, us
 
 # shuffle training examples and create mini-batches
 def create_batches(dim, n_layers, raw_data, raw_labels, lexicon, batch_size,
-                   perm=None, shuffle=True, sort=True, use_cuda=False):
+                   perm=None, shuffle=True, sort=True, keep_full=False, use_cuda=False):
   lst = perm or list(range(len(raw_data)))
   if shuffle:
     random.shuffle(lst)
@@ -92,8 +92,17 @@ def create_batches(dim, n_layers, raw_data, raw_labels, lexicon, batch_size,
   size = batch_size
   n_batch = (len(raw_data) - 1) // size + 1
 
-  for i in range(n_batch):
-    start_id, end_id = i * size, (i + 1) * size
+  start_id = 0
+  while start_id < len(raw_data):
+    end_id = start_id + size
+    if end_id > len(raw_data):
+      end_id = len(raw_data)
+
+    if keep_full and len(sorted_raw_data[start_id]) != len(sorted_raw_data[end_id - 1]):
+      end_id = start_id + 1
+      while end_id < len(raw_data) and len(sorted_raw_data[end_id]) == len(sorted_raw_data[start_id]):
+        end_id += 1
+
     bx, by, blens = create_one_batch(dim, n_layers,
                                      sorted_raw_data[start_id: end_id], sorted_raw_labels[start_id: end_id],
                                      lexicon,
@@ -102,16 +111,13 @@ def create_batches(dim, n_layers, raw_data, raw_labels, lexicon, batch_size,
     batches_x.append(bx)
     batches_y.append(by)
     batches_lens.append(blens)
+    start_id = end_id
     
-  if sort:
-    perm = list(range(n_batch))
-    random.shuffle(perm)
-    batches_x = [batches_x[i] for i in perm]
-    batches_y = [batches_y[i] for i in perm]
-    batches_lens = [batches_lens[i] for i in perm]
-
   logging.info("{} batches, avg len: {:.1f}".format(n_batch, sum_len / len(raw_data)))
-  return batches_x, batches_y, batches_lens
+  order = [0] * len(lst)
+  for i, l in enumerate(lst):
+    order[l] = i
+  return batches_x, batches_y, batches_lens, order
 
 
 class Model(torch.nn.Module):
@@ -173,17 +179,23 @@ def eval_model(model, valid_package, ix2label, args, gold_path):
     descriptor, path = tempfile.mkstemp(suffix='.tmp')
     fpo = codecs.getwriter('utf-8')(os.fdopen(descriptor, 'w'))
 
-  valid_x, valid_y, valid_lens = valid_package
+  valid_x, valid_y, valid_lens, order = valid_package
 
   model.eval()
+  tagset = []
   for x, y, lens in zip(valid_x, valid_y, valid_lens):
     output, loss = model.forward(x, y)
     output_data = output.data
     for bid in range(len(x)):
+      tags = []
       for k in range(lens[bid]):
         tag = ix2label[int(output_data[bid][k])]
-        print(tag, file=fpo)
-      print(file=fpo)
+        tags.append(tag)
+      tagset.append(tags)
+  for l in order:
+    for tag in tagset[l]:
+      print(tag, file=fpo)
+    print(file=fpo)
   fpo.close()
 
   model.train()
@@ -205,7 +217,7 @@ def train_model(epoch, model, optimizer,
   cnt = 0
   start_time = time.time()
 
-  train_x, train_y, train_lens = train_package
+  train_x, train_y, train_lens, _ = train_package
   lst = list(range(len(train_x)))
   random.shuffle(lst)
   train_x = [train_x[l] for l in lst]
@@ -345,11 +357,13 @@ def train():
     opt.eval_steps = len(train_payload[0])
 
   valid_payload = create_batches(dim, n_layers, raw_valid_data, raw_valid_labels,
-                                 lexicon, 1, shuffle=False, sort=False, use_cuda=use_cuda)
+                                 lexicon, opt.batch_size, shuffle=False, sort=True, keep_full=True,
+                                 use_cuda=use_cuda)
 
   if opt.test_path is not None:
     test_payload = create_batches(dim, n_layers, raw_test_data, raw_test_labels,
-                                  lexicon, 1, shuffle=False, sort=False, use_cuda=use_cuda)
+                                  lexicon, opt.batch_size, shuffle=False, sort=True, keep_full=True,
+                                  use_cuda=use_cuda)
   else:
     test_payload = None
 
@@ -424,8 +438,9 @@ def test():
   raw_test_data, raw_test_labels = read_corpus(args.input)
   label_to_index(raw_test_labels, label2id, incremental=False)
 
-  test_data, test_labels, test_lens = create_batches(dim, n_layers, raw_test_data, raw_test_labels, lexicon,
-                                                     shuffle=False, sort=False, use_cuda=use_cuda)
+  test_data, test_labels, test_lens, order = create_batches(dim, n_layers, raw_test_data, raw_test_labels, lexicon,
+                                                            shuffle=False, sort=True, keep_full=True,
+                                                            use_cuda=use_cuda)
 
   if args.output is not None:
     fpo = codecs.open(args.output, 'w', encoding='utf-8')
@@ -433,14 +448,21 @@ def test():
     fpo = codecs.getwriter('utf-8')(sys.stdout)
 
   model.eval()
+  tagset = []
   for x, y, lens in zip(test_data, test_labels, test_lens):
     output, loss = model.forward(x, y)
     output_data = output.data
     for bid in range(len(x)):
+      tags = []
       for k in range(lens[bid]):
         tag = id2label[int(output_data[bid][k])]
-        print(tag, file=fpo)
-      print(file=fpo)
+        tags.append(tag)
+      tagset.append(tags)
+
+  for l in order:
+    for tag in tagset[l]:
+      print(tag, file=fpo)
+    print(file=fpo)
   fpo.close()
 
 

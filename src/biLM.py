@@ -19,6 +19,7 @@ from bilm.bengio03 import Bengio03HighwayBiLm, Bengio03ResNetBiLm
 from bilm.lbl import LBLHighwayBiLm, LBLResNetBiLm
 from bilm.self_attn import SelfAttentiveLBLBiLM
 from bilm.token_embedder import ConvTokenEmbedder, LstmTokenEmbedder
+from bilm.batch import Batcher, create_one_batch
 from modules.embedding_layer import EmbeddingLayer
 from modules.classify_layer import SoftmaxLayer, CNNSoftmaxLayer, SampledSoftmaxLayer
 from dataloader import load_embedding
@@ -82,130 +83,6 @@ def read_corpus(path, max_chars=None, max_sent_len=20):
       data.append('<eos>')
   dataset = break_sentence(data, max_sent_len)
   return dataset
-
-
-def create_one_batch(x, word2id, char2id, config, oov='<oov>', pad='<pad>', sort=True):
-  """
-
-  :param x:
-  :param word2id: dict
-  :param char2id: dict
-  :param config:
-  :param oov:
-  :param pad:
-  :param sort:
-  :return:
-  """
-  batch_size = len(x)
-  lst = list(range(batch_size))
-  if sort:
-    lst.sort(key=lambda l: -len(x[l]))
-
-  x = [x[i] for i in lst]
-  lens = [len(x[i]) for i in lst]
-  max_len = max(lens)
-
-  if word2id is not None:
-    oov_id, pad_id = word2id.get(oov, None), word2id.get(pad, None)
-    assert oov_id is not None and pad_id is not None
-    batch_w = torch.LongTensor(batch_size, max_len).fill_(pad_id)
-    for i, x_i in enumerate(x):
-      for j, x_ij in enumerate(x_i):
-        batch_w[i][j] = word2id.get(x_ij, oov_id)
-  else:
-    batch_w = None
-
-  if char2id is not None:
-    bow_id, eow_id, oov_id, pad_id = char2id.get('<eow>', None), char2id.get('<bow>', None), char2id.get(oov, None), char2id.get(pad, None)
-
-    assert bow_id is not None and eow_id is not None and oov_id is not None and pad_id is not None
-
-    if config['token_embedder']['name'].lower() == 'cnn':
-      max_chars = config['token_embedder']['max_characters_per_token']
-      assert max([len(w) for i in lst for w in x[i]]) + 2 <= max_chars
-    elif config['token_embedder']['name'].lower() == 'lstm':
-      max_chars = max([len(w) for i in lst for w in x[i]]) + 2  # counting the <bow> and <eow>
-
-    batch_c = torch.LongTensor(batch_size, max_len, max_chars).fill_(pad_id)
-
-    for i, x_i in enumerate(x):
-      for j, x_ij in enumerate(x_i):
-        batch_c[i][j][0] = bow_id
-        if x_ij == '<bos>' or x_ij == '<eos>':
-          batch_c[i][j][1] = char2id.get(x_ij)
-          batch_c[i][j][2] = eow_id
-        else:
-          for k, c in enumerate(x_ij):
-            batch_c[i][j][k + 1] = char2id.get(c, oov_id)
-          batch_c[i][j][len(x_ij) + 1] = eow_id
-  else:
-    batch_c = None
-
-  masks = [torch.LongTensor(batch_size, max_len).fill_(0), [], []]
-
-  for i, x_i in enumerate(x):
-    for j in range(len(x_i)):
-      masks[0][i][j] = 1
-      if j + 1 < len(x_i):
-        masks[1].append(i * max_len + j)
-      if j > 0:
-        masks[2].append(i * max_len + j)
-
-  assert len(masks[1]) <= batch_size * max_len
-  assert len(masks[2]) <= batch_size * max_len
-
-  masks[1] = torch.LongTensor(masks[1])
-  masks[2] = torch.LongTensor(masks[2])
-
-  return batch_w, batch_c, lens, masks
-
-
-# shuffle training examples and create mini-batches
-def create_batches(x, batch_size, word2id, char2id, config, perm=None, shuffle=True, sort=True):
-  """
-
-  :param x:
-  :param batch_size:
-  :param word2id:
-  :param char2id:
-  :param config:
-  :param perm:
-  :param shuffle:
-  :param sort:
-  :return:
-  """
-  lst = perm or list(range(len(x)))
-  if shuffle:
-    random.shuffle(lst)
-
-  if sort:
-    lst.sort(key=lambda l: -len(x[l]))
-
-  x = [x[i] for i in lst]
-
-  sum_len = 0.0
-  batches_w, batches_c, batches_lens, batches_masks = [], [], [], []
-  size = batch_size
-  nbatch = (len(x) - 1) // size + 1
-  for i in range(nbatch):
-    start_id, end_id = i * size, (i + 1) * size
-    bw, bc, blens, bmasks = create_one_batch(x[start_id: end_id], word2id, char2id, config, sort=sort)
-    sum_len += sum(blens)
-    batches_w.append(bw)
-    batches_c.append(bc)
-    batches_lens.append(blens)
-    batches_masks.append(bmasks)
-
-  if sort:
-    perm = list(range(nbatch))
-    random.shuffle(perm)
-    batches_w = [batches_w[i] for i in perm]
-    batches_c = [batches_c[i] for i in perm]
-    batches_lens = [batches_lens[i] for i in perm]
-    batches_masks = [batches_masks[i] for i in perm]
-
-  logging.info("{} batches, avg len: {:.1f}".format(nbatch, sum_len / len(x)))
-  return batches_w, batches_c, batches_lens, batches_masks
 
 
 class Model(torch.nn.Module):
@@ -273,7 +150,7 @@ class Model(torch.nn.Module):
 
     encoder_name = self.config['encoder']['name'].lower()
     if encoder_name == 'elmo':
-      mask = torch.autograd.Variable(mask_package[0].cuda()).cuda() if self.use_cuda else \
+      mask = torch.autograd.Variable(mask_package[0]).cuda() if self.use_cuda else \
         torch.autograd.Variable(mask_package[0])
       encoder_output = self.encoder(token_embedding, mask)
       encoder_output = encoder_output[1]
@@ -292,9 +169,9 @@ class Model(torch.nn.Module):
     if self.use_cuda:
       word_inp = word_inp.cuda()
 
-    mask1 = torch.autograd.Variable(mask_package[1].cuda()).cuda() if self.use_cuda else \
+    mask1 = torch.autograd.Variable(mask_package[1]).cuda() if self.use_cuda else \
       torch.autograd.Variable(mask_package[1])
-    mask2 = torch.autograd.Variable(mask_package[2].cuda()).cuda() if self.use_cuda else \
+    mask2 = torch.autograd.Variable(mask_package[2]).cuda() if self.use_cuda else \
       torch.autograd.Variable(mask_package[2])
 
     forward_x = forward.contiguous().view(-1, self.output_dim).index_select(0, mask1)
@@ -317,14 +194,13 @@ class Model(torch.nn.Module):
     self.classify_layer.load_state_dict(torch.load(os.path.join(path, 'classifier.pkl')))
 
 
-def eval_model(model, valid):
+def eval_model(model, valid_batch):
   model.eval()
   if model.config['classifier']['name'].lower() == 'cnn_softmax' or \
       model.config['classifier']['name'].lower() == 'sampled_softmax':
     model.classify_layer.update_embedding_matrix()
   total_loss, total_tag = 0.0, 0
-  valid_w, valid_c, valid_lens, valid_masks = valid
-  for w, c, lens, masks in zip(valid_w, valid_c, valid_lens, valid_masks):
+  for w, c, lens, masks in valid_batch.get():
     loss_forward, loss_backward = model.forward(w, c, masks)
     total_loss += loss_forward.item()
     n_tags = sum(lens)
@@ -334,7 +210,7 @@ def eval_model(model, valid):
 
 
 def train_model(epoch, opt, model, optimizer,
-                train, valid, test, best_train, best_valid, test_result):
+                train_batch, valid_batch, test_batch, best_train, best_valid, test_result):
   """
   Training model for one epoch
 
@@ -356,17 +232,7 @@ def train_model(epoch, opt, model, optimizer,
   cnt = 0
   start_time = time.time()
 
-  train_w, train_c, train_lens, train_masks = train
-
-  lst = list(range(len(train_w)))
-  random.shuffle(lst)
-  
-  train_w = [train_w[l] for l in lst]
-  train_c = [train_c[l] for l in lst]
-  train_lens = [train_lens[l] for l in lst]
-  train_masks = [train_masks[l] for l in lst]
-
-  for w, c, lens, masks in zip(train_w, train_c, train_lens, train_masks):
+  for w, c, lens, masks in train_batch.get():
     cnt += 1
     model.zero_grad()
     loss_forward, loss_backward = model.forward(w, c, masks)
@@ -386,8 +252,8 @@ def train_model(epoch, opt, model, optimizer,
       ))
       start_time = time.time()
 
-    if cnt % opt.eval_steps == 0 or cnt % len(train_w) == 0:
-      if valid is None:
+    if cnt % opt.eval_steps == 0 or cnt % train_batch.num_batches() == 0:
+      if valid_batch is None:
         train_ppl = np.exp(total_loss / total_tag)
         logging.info("Epoch={} iter={} lr={:.6f} train_ppl={:.6f}".format(
           epoch, cnt, optimizer.param_groups[0]['lr'], train_ppl))
@@ -396,7 +262,7 @@ def train_model(epoch, opt, model, optimizer,
           logging.info("New record achieved on training dataset!")
           model.save_model(opt.model, opt.save_classify_layer)      
       else:
-        valid_ppl = eval_model(model, valid)
+        valid_ppl = eval_model(model, valid_batch)
         logging.info("Epoch={} iter={} lr={:.6f} valid_ppl={:.6f}".format(
           epoch, cnt, optimizer.param_groups[0]['lr'], valid_ppl))
 
@@ -406,7 +272,7 @@ def train_model(epoch, opt, model, optimizer,
           logging.info("New record achieved!")
 
           if test is not None:
-            test_result = eval_model(model, test)
+            test_result = eval_model(model, test_batch)
             logging.info("Epoch={} iter={} lr={:.6f} test_ppl={:.6f}".format(
               epoch, cnt, optimizer.param_groups[0]['lr'], test_result))
   return best_train, best_valid, test_result
@@ -580,24 +446,23 @@ def train():
     char_emb_layer = None
 
   # Create training batch
-  training_data = create_batches(raw_training_data, opt.batch_size, word_lexicon, char_lexicon, config)
+  training_data = Batcher(raw_training_data, opt.batch_size, word_lexicon, char_lexicon, config)
 
   # Set up evaluation steps.
   if opt.eval_steps is None:
-    training_w = training_data[0]
-    opt.eval_steps = len(training_w)
+    opt.eval_steps = training_data.num_batches()
   logging.info('Evaluate every {0} batches.'.format(opt.eval_steps))
 
   # If there is valid, create valid batch.
   if raw_valid_data is not None:
-    valid_data = create_batches(
+    valid_data = Batcher(
       raw_valid_data, opt.batch_size, word_lexicon, char_lexicon, config, sort=False, shuffle=False)
   else:
     valid_data = None
 
   # If there is test, create test batch.
   if raw_test_data is not None:
-    test_data = create_batches(
+    test_data = Batcher(
       raw_test_data, opt.batch_size, word_lexicon, char_lexicon, config, sort=False, shuffle=False)
   else:
     test_data = None
@@ -723,10 +588,9 @@ def test():
   else:
     raise ValueError('')
 
-  test_w, test_c, test_lens, test_masks = create_batches(
-    test, args.batch_size, word_lexicon, char_lexicon, config, sort=False, shuffle=False, use_cuda=use_cuda)
+  test_batch = Batcher(test, args.batch_size, word_lexicon, char_lexicon, config, sort=False, shuffle=False)
 
-  test_result = eval_model(model, (test_w, test_c, test_lens, test_masks))
+  test_result = eval_model(model, test_batch)
 
   logging.info("test_ppl={:.6f}".format(test_result))
 

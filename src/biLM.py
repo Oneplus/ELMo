@@ -21,7 +21,10 @@ from bilm.self_attn import SelfAttentiveLBLBiLM
 from bilm.token_embedder import ConvTokenEmbedder, LstmTokenEmbedder
 from bilm.batch import Batcher, create_one_batch
 from modules.embedding_layer import EmbeddingLayer
-from modules.classify_layer import SoftmaxLayer, CNNSoftmaxLayer, SampledSoftmaxLayer
+from modules.softmax_layer import SoftmaxLayer
+from modules.sampled_softmax_layer import SampledSoftmaxLayer
+from modules.window_sampled_softmax_layer import WindowSampledSoftmaxLayer
+from modules.window_sampled_cnn_softmax_layer import WindowSampledCNNSoftmaxLayer
 from dataloader import load_embedding
 from collections import Counter
 import numpy as np
@@ -123,11 +126,15 @@ class Model(torch.nn.Module):
     if classify_layer_name == 'softmax':
       self.classify_layer = SoftmaxLayer(self.output_dim, n_class)
     elif classify_layer_name == 'cnn_softmax':
-      self.classify_layer = CNNSoftmaxLayer(self.token_embedder, self.output_dim, n_class,
-                                            config['classifier']['n_samples'], config['classifier']['corr_dim'],
-                                            use_cuda)
+      self.classify_layer = WindowSampledCNNSoftmaxLayer(self.token_embedder, self.output_dim, n_class,
+                                                         config['classifier']['n_samples'], config['classifier']['corr_dim'],
+                                                         use_cuda)
     elif classify_layer_name == 'sampled_softmax':
-      self.classify_layer = SampledSoftmaxLayer(self.output_dim, n_class, config['classifier']['n_samples'], use_cuda)
+      self.classify_layer = SampledSoftmaxLayer(self.output_dim, n_class, config['classifier']['n_samples'],
+                                                use_cuda)
+    elif classify_layer_name == 'window_sampled_softmax':
+      self.classify_layer = WindowSampledSoftmaxLayer(self.output_dim, n_class, config['classifier']['n_samples'],
+                                                      use_cuda)
     else:
       raise ValueError('Unknown classify_layer: {}'.format(classify_layer_name))
 
@@ -141,7 +148,7 @@ class Model(torch.nn.Module):
     """
     classifier_name = self.config['classifier']['name'].lower()
 
-    if self.training and classifier_name == 'cnn_softmax' or classifier_name == 'sampled_softmax':
+    if self.training and classifier_name in ('cnn_softmax', 'window_sampled_softmax'):
       self.classify_layer.update_negative_samples(word_inp, chars_inp, mask_package[0])
       self.classify_layer.update_embedding_matrix()
 

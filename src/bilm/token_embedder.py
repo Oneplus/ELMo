@@ -1,15 +1,10 @@
 from __future__ import absolute_import
 from __future__ import unicode_literals
-import logging
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.autograd import Variable
-import copy
 from modules.highway import Highway
 
 
-class LstmTokenEmbedder(nn.Module):
+class LstmTokenEmbedder(torch.nn.Module):
   def __init__(self, config, word_emb_layer, char_emb_layer, use_cuda=False):
     super(LstmTokenEmbedder, self).__init__()
     self.config = config
@@ -23,21 +18,27 @@ class LstmTokenEmbedder(nn.Module):
 
     if char_emb_layer is not None:
       emb_dim += char_emb_layer.n_d * 2
-      self.char_lstm = nn.LSTM(char_emb_layer.n_d, char_emb_layer.n_d, num_layers=1, bidirectional=True,
-                               batch_first=True, dropout=config['dropout'])
+      self.char_lstm = torch.nn.LSTM(char_emb_layer.n_d, char_emb_layer.n_d, num_layers=1, bidirectional=True,
+                                     batch_first=True, dropout=config['dropout'])
 
-    self.projection = nn.Linear(emb_dim, self.output_dim, bias=True)
+    self.projection = torch.nn.Linear(emb_dim, self.output_dim, bias=True)
 
   def forward(self, word_inp, chars_inp, shape):
     embs = []
     batch_size, seq_len = shape
     if self.word_emb_layer is not None:
-      word_emb = self.word_emb_layer(Variable(word_inp).cuda() if self.use_cuda else Variable(word_inp))
+      word_inp = torch.autograd.Variable(word_inp, requires_grad=False)
+      if self.use_cuda:
+        word_inp = word_inp.cuda()
+      word_emb = self.word_emb_layer(word_inp)
       embs.append(word_emb)
 
     if self.char_emb_layer is not None:
       chars_inp = chars_inp.view(batch_size * seq_len, -1)
-      chars_emb = self.char_emb_layer(Variable(chars_inp).cuda() if self.use_cuda else Variable(chars_inp))
+      chars_inp = torch.autograd.Variable(chars_inp, requires_grad=False)
+      if self.use_cuda:
+        chars_inp = chars_inp.cuda()
+      chars_emb = self.char_emb_layer(chars_inp)
       _, (chars_outputs, __) = self.char_lstm(chars_emb)
       chars_outputs = chars_outputs.contiguous().view(-1, self.config['token_embedder']['char_dim'] * 2)
       embs.append(chars_outputs)
@@ -47,7 +48,7 @@ class LstmTokenEmbedder(nn.Module):
     return self.projection(token_embedding)
 
 
-class ConvTokenEmbedder(nn.Module):
+class ConvTokenEmbedder(torch.nn.Module):
   def __init__(self, config, word_emb_layer, char_emb_layer, use_cuda):
     super(ConvTokenEmbedder, self).__init__()
     self.config = config
@@ -76,7 +77,7 @@ class ConvTokenEmbedder(nn.Module):
         )
         self.convolutions.append(conv)
 
-      self.convolutions = nn.ModuleList(self.convolutions)
+      self.convolutions = torch.nn.ModuleList(self.convolutions)
       
       self.n_filters = sum(f[1] for f in filters)
       self.n_highway = cnn_config['n_highway']
@@ -84,21 +85,26 @@ class ConvTokenEmbedder(nn.Module):
       self.highways = Highway(self.n_filters, self.n_highway, activation=torch.nn.functional.relu)
       self.emb_dim += self.n_filters
 
-    self.projection = nn.Linear(self.emb_dim, self.output_dim, bias=True)
+    self.projection = torch.nn.Linear(self.emb_dim, self.output_dim, bias=True)
     
   def forward(self, word_inp, chars_inp, shape):
     embs = []
     batch_size, seq_len = shape
     if self.word_emb_layer is not None:
       batch_size, seq_len = word_inp.size(0), word_inp.size(1)
-      word_emb = self.word_emb_layer(Variable(word_inp).cuda() if self.use_cuda else Variable(word_inp))
+      word_inp = torch.autograd.Variable(word_inp, requires_grad=False)
+      if self.use_cuda:
+        word_inp = word_inp.cuda()
+      word_emb = self.word_emb_layer(word_inp)
       embs.append(word_emb)
 
     if self.char_emb_layer is not None:
       chars_inp = chars_inp.view(batch_size * seq_len, -1)
+      chars_inp = torch.autograd.Variable(chars_inp, requires_grad=False)
+      if self.use_cuda:
+        chars_inp = chars_inp.cuda()
 
-      character_embedding = self.char_emb_layer(Variable(chars_inp).cuda() if self.use_cuda else Variable(chars_inp))
-
+      character_embedding = self.char_emb_layer(chars_inp)
       character_embedding = torch.transpose(character_embedding, 1, 2)
 
       cnn_config = self.config['token_embedder']

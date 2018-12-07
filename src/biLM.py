@@ -218,11 +218,11 @@ def train_model(epoch, opt, model, optimizer,
   :param opt:
   :param model:
   :param optimizer:
-  :param train:
+  :param train_batch:
   :param best_train:
-  :param valid:
+  :param valid_batch:
   :param best_valid:
-  :param test:
+  :param test_batch:
   :param test_result:
   :return:
   """

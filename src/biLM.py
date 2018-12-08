@@ -131,7 +131,7 @@ class Model(torch.nn.Module):
                                                          use_cuda)
     elif classify_layer_name == 'sampled_softmax':
       self.classify_layer = SampledSoftmaxLayer(self.output_dim, n_class, config['classifier']['n_samples'],
-                                                use_cuda, unk_id=word_emb_layer.word2id.get('<oov>'))
+                                                use_cuda, unk_id=0)
     elif classify_layer_name == 'window_sampled_softmax':
       self.classify_layer = WindowSampledSoftmaxLayer(self.output_dim, n_class, config['classifier']['n_samples'],
                                                       use_cuda)
@@ -413,13 +413,13 @@ def train():
     embs = None
     word_lexicon = {}
 
-  # Maintain the vocabulary. vocabulary is used in either WordEmbeddingInput or softmax classification
-  vocab = get_truncated_vocab(raw_training_data, opt.min_count)
-
   # Ensure index of '<oov>' is 0
-  for special_word in ['<oov>', '<bos>', '<eos>',  '<pad>']:
+  for special_word in ['<oov>', '<bos>', '<eos>', '<pad>']:
     if special_word not in word_lexicon:
       word_lexicon[special_word] = len(word_lexicon)
+
+  # Maintain the vocabulary. vocabulary is used in either WordEmbeddingInput or softmax classification
+  vocab = get_truncated_vocab(raw_training_data, opt.min_count)
 
   for word, _ in vocab:
     if word not in word_lexicon:

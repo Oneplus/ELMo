@@ -1,9 +1,16 @@
 #!/usr/bin/env python
+from typing import Dict, List
 import random
 import torch
 
 
-def create_one_batch(x, word2id, char2id, config, oov='<oov>', pad='<pad>', sort=True):
+def create_one_batch(x: List,
+                     word2id: Dict,
+                     char2id: Dict,
+                     config: Dict,
+                     oov: str = '<oov>',
+                     pad: str ='<pad>',
+                     sort: bool = True):
   """
 
   :param x:
@@ -80,7 +87,15 @@ def create_one_batch(x, word2id, char2id, config, oov='<oov>', pad='<pad>', sort
 
 
 class Batcher(object):
-  def __init__(self, data, batch_size, word2id, char2id, config, perm=None, shuffle=True, sort=True):
+  def __init__(self,
+               data: List,
+               batch_size: int,
+               word2id: Dict,
+               char2id: Dict,
+               config: Dict,
+               perm: bool = None,
+               shuffle: bool = True,
+               sort: bool = True):
     self.batch_size = batch_size
     self.word2id = word2id
     self.char2id = char2id

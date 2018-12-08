@@ -203,8 +203,7 @@ class Model(torch.nn.Module):
 
 def eval_model(model, valid_batch):
   model.eval()
-  if model.config['classifier']['name'].lower() == 'cnn_softmax' or \
-      model.config['classifier']['name'].lower() == 'sampled_softmax':
+  if model.config['classifier']['name'].lower() in ('window_sampled_cnn_softmax', 'window_sampled_softmax'):
     model.classify_layer.update_embedding_matrix()
   total_loss, total_tag = 0.0, 0
   for w, c, lens, masks in valid_batch.get():

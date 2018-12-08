@@ -3,6 +3,7 @@ import math
 import copy
 import numpy as np
 from modules.highway import Highway
+from modules.positional_encoding import PositionalEncoding
 
 
 def clones(module, N):
@@ -10,8 +11,18 @@ def clones(module, N):
   return torch.nn.ModuleList([copy.deepcopy(module) for _ in range(N)])
 
 
-def attention(query, key, value, mask=None, dropout=None):
-  """Compute 'Scaled Dot Product Attention'"""
+def attention(query: torch.Tensor, key: torch.Tensor, value: torch.Tensor,
+              mask=None, dropout=None):
+  """
+  Compute 'Scaled Dot Product Attention'
+
+  :param query: [batch, h, seq_len, d_k]
+  :param key: [batch, h, seq_len, d_k]
+  :param value: [batch, h, seq_len, d_k]
+  :param mask: [1, seq_len, seq_len]
+  :param dropout:
+  :return:
+  """
   d_k = query.size(-1)
   scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(d_k)
   if mask is not None:
@@ -51,8 +62,16 @@ class MultiHeadedAttention(torch.nn.Module):
     self.attn = None
     self.dropout = torch.nn.Dropout(p=dropout)
 
-  def forward(self, query, key, value, mask=None):
-    """Implements Figure 2"""
+  def forward(self, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor,
+              mask=None) -> torch.Tensor:
+    """
+
+    :param query: [batch, seq_len, d_model]
+    :param key: [batch, seq_len, d_model]
+    :param value: [batch, seq_len, d_model]
+    :param mask: [1, seq_len, seq_len]
+    :return:
+    """
     if mask is not None:
       # Same mask applied to all h heads.
       mask = mask.unsqueeze(1)
@@ -78,6 +97,7 @@ class SelfAttentiveLBLBiLM(torch.nn.Module):
     self.config = config
     self.use_cuda = use_cuda
     self.use_position = config['encoder'].get('position', False)
+    self.use_relative_position_weights = config['encoder'].get('relative_position_weights', False)
     self.num_layers = config['encoder']['n_layers']
 
     self.left_attn = MultiHeadedAttention(64, config['encoder']['projection_dim'], config['dropout'])
@@ -98,6 +118,15 @@ class SelfAttentiveLBLBiLM(torch.nn.Module):
 
     if self.use_position:
       self.position = PositionalEncoding(config['encoder']['projection_dim'], self.config['dropout'])
+
+    if self.use_relative_position_weights:
+      left_weights = torch.FloatTensor(width).fill_(1. / width)
+      right_weights = torch.FloatTensor(width).fill_(1. / width)
+      if use_cuda:
+        left_weights = left_weights.cuda()
+        right_weights = right_weights.cuda()
+      self.left_weights = torch.autograd.Variable(left_weights)
+      self.right_weights = torch.autograd.Variable(right_weights)
 
     self.left_block = Highway(hidden_size, num_layers=self.num_layers)
     self.right_block = Highway(hidden_size, num_layers=self.num_layers)
@@ -125,8 +154,12 @@ class SelfAttentiveLBLBiLM(torch.nn.Module):
     all_layers_along_steps, last_layer_along_steps = [], []
     for start in range(sequence_len):
       end = start + self.width
-      left_out = new_left_inputs[:, end, :]
-      right_out = new_right_inputs[:, end, :]
+      left_out = new_left_inputs[:, end - 1, :]
+      right_out = new_right_inputs[:, end + 1, :]
+
+      if self.use_relative_position_weights:
+        left_out = left_out + new_inputs.narrow(1, start, self.width).transpose(-2, -1).matmul(self.left_weights)
+        right_out = right_out + new_inputs.narrow(1, end + 1, self.width).transpose(-2, -1).matmul(self.right_weights)
 
       left_out = self.left_block(left_out)
       right_out = self.right_block(right_out)

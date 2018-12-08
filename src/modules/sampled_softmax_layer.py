@@ -44,7 +44,7 @@ class SampledSoftmaxLayer(torch.nn.Module):
   """
   This is adopted from AllenNLP
   """
-  def __init__(self, embedding_dim, num_words, num_samples, use_cuda):
+  def __init__(self, embedding_dim: int, num_words: int, num_samples: int, use_cuda: bool):
     """
 
     :param embedding_dim:

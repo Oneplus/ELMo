@@ -131,7 +131,7 @@ class Model(torch.nn.Module):
                                                          use_cuda)
     elif classify_layer_name == 'sampled_softmax':
       self.classify_layer = SampledSoftmaxLayer(self.output_dim, n_class, config['classifier']['n_samples'],
-                                                use_cuda)
+                                                use_cuda, unk_id=word_emb_layer.word2id.get('<oov>'))
     elif classify_layer_name == 'window_sampled_softmax':
       self.classify_layer = WindowSampledSoftmaxLayer(self.output_dim, n_class, config['classifier']['n_samples'],
                                                       use_cuda)

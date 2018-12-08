@@ -113,7 +113,7 @@ class ConvTokenEmbedder(torch.nn.Module):
       elif cnn_config['activation'] == 'relu':
         activation = torch.nn.functional.relu
       else:
-        raise Exception("Unknown activation")
+        raise ValueError("Unknown activation")
 
       convs = []
       for i in range(len(self.convolutions)):

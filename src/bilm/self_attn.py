@@ -157,8 +157,8 @@ class SelfAttentiveLBLBiLM(torch.nn.Module):
         left_out = left_out + new_inputs.narrow(1, start, self.width + 1).transpose(-2, -1).matmul(self.left_weights)
         right_out = right_out + new_inputs.narrow(1, end, self.width + 1).transpose(-2, -1).matmul(self.right_weights)
 
-      left_out = self.left_block(left_out)
-      right_out = self.right_block(right_out)
+      left_out = self.left_block(self.dropout(left_out))
+      right_out = self.right_block(self.dropout(right_out))
       out = torch.cat([left_out, right_out], dim=1)
 
       last_layer_along_steps.append(out)

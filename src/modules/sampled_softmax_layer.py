@@ -44,7 +44,10 @@ class SampledSoftmaxLayer(torch.nn.Module):
   """
   This is adopted from AllenNLP
   """
-  def __init__(self, embedding_dim: int, num_words: int, num_samples: int, use_cuda: bool):
+  def __init__(self, embedding_dim: int, num_words: int, num_samples: int,
+               use_cuda: bool,
+               unk_id: int = None,
+               use_character_inputs: bool = True):
     """
 
     :param embedding_dim:
@@ -62,16 +65,19 @@ class SampledSoftmaxLayer(torch.nn.Module):
 
     self.choice_func = _choice
 
-    self.softmax_w = torch.nn.Embedding(num_words, embedding_dim)
-    self.softmax_w.weight.data.normal_(mean=0.0, std=1.0 / np.sqrt(embedding_dim))
-    self.softmax_b = torch.nn.Embedding(num_words, 1)
-    self.softmax_b.weight.data.fill_(0.0)
+    self.softmax_w = torch.nn.Parameter(torch.randn(num_words, embedding_dim) / np.sqrt(embedding_dim))
+    self.softmax_b = torch.nn.Parameter(torch.zeros(num_words))
+
+    self.use_character_inputs = use_character_inputs
+
+    if use_character_inputs:
+      self._unk_id = unk_id
 
     self._num_samples = num_samples
     self._embedding_dim = embedding_dim
     self._num_words = num_words
 
-    num_words = self.softmax_w.weight.size(0)
+    num_words = self.softmax_w.size(0)
 
     self._num_words = num_words
     self._log_num_words_p1 = np.log(num_words + 1)
@@ -115,9 +121,10 @@ class SampledSoftmaxLayer(torch.nn.Module):
     # Get the softmax weights (so we can compute logits)
     all_ids = torch.cat([long_targets, sampled_ids], dim=0)
 
-    all_ids_1 = all_ids.unsqueeze(1)
-    all_w = self.softmax_w(all_ids_1).squeeze(1)
-    all_b = self.softmax_b(all_ids_1).squeeze(2).squeeze(1)
+    all_w = torch.nn.functional.embedding(all_ids, self.softmax_w)
+    # the unsqueeze / squeeze works around an issue with 1 dim
+    # embeddings
+    all_b = torch.nn.functional.embedding(all_ids, self.softmax_b.unsqueeze(1)).squeeze(1)
 
     batch_size = long_targets.size(0)
     true_w = all_w[:batch_size, :]
@@ -156,16 +163,12 @@ class SampledSoftmaxLayer(torch.nn.Module):
     # pylint: disable=invalid-name
     # evaluation mode, use full softmax
 
-    w = self.softmax_w.weight
-    b = self.softmax_b.weight.squeeze(1)
+    w = self.softmax_w
+    b = self.softmax_b
 
     log_softmax = torch.nn.functional.log_softmax(torch.matmul(embeddings, w.t()) + b, dim=-1)
-    if self.tie_embeddings and not self.use_character_inputs:
-      targets_ = targets + 1
-    else:
-      targets_ = targets
-    return torch.nn.functional.nll_loss(log_softmax, targets_.long(),
-                                        reduction="sum")
+    targets_ = targets
+    return torch.nn.functional.nll_loss(log_softmax, targets_.long(), reduction="sum")
 
   def log_uniform_candidate_sampler(self, targets, choice_func=_choice):
     # returns sampled, true_expected_count, sampled_expected_count

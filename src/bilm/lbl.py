@@ -22,16 +22,15 @@ class LBLHighwayBiLm(torch.nn.Module):
     input_size = config['encoder']['projection_dim']
     hidden_size = config['encoder']['projection_dim']
 
-    if use_cuda:
-       self.left_padding = torch.autograd.Variable(torch.cuda.FloatTensor(width, hidden_size))
-       self.right_padding = torch.autograd.Variable(torch.cuda.FloatTensor(width, hidden_size))
-       self.left_weights = torch.autograd.Variable(torch.cuda.FloatTensor(width).fill_(1./width))
-       self.right_weights = torch.autograd.Variable(torch.cuda.FloatTensor(width).fill_(1./width))
-    else:
-       self.left_padding = torch.autograd.Variable(torch.FloatTensor(width, hidden_size))
-       self.right_padding = torch.autograd.Variable(torch.FloatTensor(width, hidden_size))
-       self.left_weights = torch.autograd.Variable(torch.FloatTensor(width).fill_(1./width))
-       self.right_weights = torch.autograd.Variable(torch.FloatTensor(width).fill_(1./width))
+    left_padding = torch.FloatTensor(width, hidden_size)
+    right_padding = torch.FloatTensor(width, hidden_size)
+    left_weights = torch.FloatTensor(width + 1).fill_(1. / (width + 1))
+    right_weights = torch.FloatTensor(width + 1).fill_(1. / (width + 1))
+
+    self.left_padding = torch.nn.Parameter(left_padding)
+    self.right_padding = torch.nn.Parameter(right_padding)
+    self.left_weights = torch.nn.Parameter(left_weights)
+    self.right_weights = torch.nn.Parameter(right_weights)
 
     if self.use_position:
       self.position = PositionalEncoding(config['encoder']['projection_dim'], self.config['dropout'])
@@ -53,10 +52,10 @@ class LBLHighwayBiLm(torch.nn.Module):
     all_layers_along_steps, last_layer_along_steps = [], []
     for start in range(sequence_len):
       end = start + self.width
-      left_inp = new_inputs.narrow(1, start, self.width)
+      left_inp = new_inputs.narrow(1, start, self.width + 1)
       left_out = left_inp.transpose(-2, -1).matmul(self.left_weights)
 
-      right_inp = new_inputs.narrow(1, end + 1, self.width)
+      right_inp = new_inputs.narrow(1, end, self.width + 1)
       right_out = right_inp.transpose(-2, -1).matmul(self.right_weights)
 
       left_out = self.left_block(left_out)
@@ -84,16 +83,15 @@ class LBLResNetBiLm(torch.nn.Module):
     hidden_size = config['encoder']['projection_dim']
     num_layers = config['encoder']['n_layers']
 
-    if use_cuda:
-       self.left_padding = torch.autograd.Variable(torch.cuda.FloatTensor(width, hidden_size))
-       self.right_padding = torch.autograd.Variable(torch.cuda.FloatTensor(width, hidden_size))
-       self.left_weights = torch.autograd.Variable(torch.cuda.FloatTensor(width).fill_(1./width))
-       self.right_weights = torch.autograd.Variable(torch.cuda.FloatTensor(width).fill_(1./width))
-    else:
-       self.left_padding = torch.autograd.Variable(torch.FloatTensor(width, hidden_size))
-       self.right_padding = torch.autograd.Variable(torch.FloatTensor(width, hidden_size))
-       self.left_weights = torch.autograd.Variable(torch.FloatTensor(width).fill_(1./width))
-       self.right_weights = torch.autograd.Variable(torch.FloatTensor(width).fill_(1./width))
+    left_padding = torch.FloatTensor(width, hidden_size)
+    right_padding = torch.FloatTensor(width, hidden_size)
+    left_weights = torch.FloatTensor(width + 1).fill_(1. / (width + 1))
+    right_weights = torch.FloatTensor(width + 1).fill_(1. / (width + 1))
+
+    self.left_padding = torch.nn.Parameter(left_padding)
+    self.right_padding = torch.nn.Parameter(right_padding)
+    self.left_weights = torch.nn.Parameter(left_weights)
+    self.right_weights = torch.nn.Parameter(right_weights)
 
     if self.use_position:
       self.position = PositionalEncoding(config['encoder']['projection_dim'], self.config['dropout'])

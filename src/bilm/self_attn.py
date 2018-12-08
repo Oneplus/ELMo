@@ -109,24 +109,20 @@ class SelfAttentiveLBLBiLM(torch.nn.Module):
     input_size = config['encoder']['projection_dim']
     hidden_size = config['encoder']['projection_dim']
 
-    if use_cuda:
-       self.left_padding = torch.autograd.Variable(torch.cuda.FloatTensor(width, hidden_size))
-       self.right_padding = torch.autograd.Variable(torch.cuda.FloatTensor(width, hidden_size))
-    else:
-       self.left_padding = torch.autograd.Variable(torch.FloatTensor(width, hidden_size))
-       self.right_padding = torch.autograd.Variable(torch.FloatTensor(width, hidden_size))
+    left_padding = torch.FloatTensor(width, hidden_size)
+    right_padding = torch.FloatTensor(width, hidden_size)
+
+    self.left_padding = torch.nn.Parameter(left_padding)
+    self.right_padding = torch.nn.Parameter(right_padding)
+
+    if self.use_relative_position_weights:
+      left_weights = torch.FloatTensor(width + 1).fill_(1. / (width + 1))
+      right_weights = torch.FloatTensor(width + 1).fill_(1. / (width + 1))
+      self.left_weights = torch.nn.Parameter(left_weights)
+      self.right_weights = torch.nn.Parameter(right_weights)
 
     if self.use_position:
       self.position = PositionalEncoding(config['encoder']['projection_dim'], self.config['dropout'])
-
-    if self.use_relative_position_weights:
-      left_weights = torch.FloatTensor(width).fill_(1. / width)
-      right_weights = torch.FloatTensor(width).fill_(1. / width)
-      if use_cuda:
-        left_weights = left_weights.cuda()
-        right_weights = right_weights.cuda()
-      self.left_weights = torch.autograd.Variable(left_weights)
-      self.right_weights = torch.autograd.Variable(right_weights)
 
     self.left_block = Highway(hidden_size, num_layers=self.num_layers)
     self.right_block = Highway(hidden_size, num_layers=self.num_layers)
@@ -154,12 +150,12 @@ class SelfAttentiveLBLBiLM(torch.nn.Module):
     all_layers_along_steps, last_layer_along_steps = [], []
     for start in range(sequence_len):
       end = start + self.width
-      left_out = new_left_inputs[:, end - 1, :]
-      right_out = new_right_inputs[:, end + 1, :]
+      left_out = new_left_inputs[:, end, :]
+      right_out = new_right_inputs[:, end, :]
 
       if self.use_relative_position_weights:
-        left_out = left_out + new_inputs.narrow(1, start, self.width).transpose(-2, -1).matmul(self.left_weights)
-        right_out = right_out + new_inputs.narrow(1, end + 1, self.width).transpose(-2, -1).matmul(self.right_weights)
+        left_out = left_out + new_inputs.narrow(1, start, self.width + 1).transpose(-2, -1).matmul(self.left_weights)
+        right_out = right_out + new_inputs.narrow(1, end, self.width + 1).transpose(-2, -1).matmul(self.right_weights)
 
       left_out = self.left_block(left_out)
       right_out = self.right_block(right_out)

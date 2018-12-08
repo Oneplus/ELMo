@@ -19,15 +19,14 @@ class Bengio03HighwayBiLm(torch.nn.Module):
     self.activation = torch.nn.ReLU()
 
     width = config['encoder']['width']
-    input_size = config['encoder']['projection_dim'] * width
+    input_size = config['encoder']['projection_dim'] * (width + 1)
     hidden_size = config['encoder']['projection_dim']
 
-    if use_cuda:
-       self.left_padding = torch.autograd.Variable(torch.cuda.FloatTensor(width, hidden_size))
-       self.right_padding = torch.autograd.Variable(torch.cuda.FloatTensor(width, hidden_size))
-    else:
-       self.left_padding = torch.autograd.Variable(torch.FloatTensor(width, hidden_size))
-       self.right_padding = torch.autograd.Variable(torch.FloatTensor(width, hidden_size))
+    left_padding = torch.FloatTensor(width, hidden_size)
+    right_padding = torch.FloatTensor(width, hidden_size)
+
+    self.left_padding = torch.nn.Parameter(left_padding)
+    self.right_padding = torch.nn.Parameter(right_padding)
 
     if self.use_position:
       self.position = PositionalEncoding(config['encoder']['projection_dim'], self.config['dropout'])
@@ -57,8 +56,8 @@ class Bengio03HighwayBiLm(torch.nn.Module):
     for start in range(sequence_len):
       end = start + self.width
       # left_inp: [32 x 8 x 512]
-      left_inp = new_inputs.narrow(1, start, self.width).contiguous().view(batch_size, -1)
-      right_inp = new_inputs.narrow(1, end + 1, self.width).contiguous().view(batch_size, -1)
+      left_inp = new_inputs.narrow(1, start, self.width + 1).contiguous().view(batch_size, -1)
+      right_inp = new_inputs.narrow(1, end, self.width + 1).contiguous().view(batch_size, -1)
 
       # left_out: [32 x 512]
       left_out = self.dropout(self.activation(self.left_project(left_inp)))
@@ -94,12 +93,11 @@ class Bengio03ResNetBiLm(torch.nn.Module):
     hidden_size = config['encoder']['projection_dim']
     num_layers = config['encoder']['n_layers']
 
-    if use_cuda:
-       self.left_padding = torch.autograd.Variable(torch.cuda.FloatTensor(width, hidden_size))
-       self.right_padding = torch.autograd.Variable(torch.cuda.FloatTensor(width, hidden_size))
-    else:
-       self.left_padding = torch.autograd.Variable(torch.FloatTensor(width, hidden_size))
-       self.right_padding = torch.autograd.Variable(torch.FloatTensor(width, hidden_size))
+    left_padding = torch.FloatTensor(width, hidden_size)
+    right_padding = torch.FloatTensor(width, hidden_size)
+
+    self.left_padding = torch.nn.Parameter(left_padding)
+    self.right_padding = torch.nn.Parameter(right_padding)
 
     if self.use_position:
       self.position = PositionalEncoding(config['encoder']['projection_dim'], self.config['dropout'])

@@ -116,8 +116,8 @@ class SelfAttentiveLBLBiLM(torch.nn.Module):
     self.right_padding = torch.nn.Parameter(right_padding)
 
     if self.use_relative_position_weights:
-      left_weights = torch.FloatTensor(width + 1).fill_(1. / (width + 1))
-      right_weights = torch.FloatTensor(width + 1).fill_(1. / (width + 1))
+      left_weights = torch.FloatTensor(width + 1)
+      right_weights = torch.FloatTensor(width + 1)
       self.left_weights = torch.nn.Parameter(left_weights)
       self.right_weights = torch.nn.Parameter(right_weights)
 

@@ -85,8 +85,8 @@ class LBLResNetBiLm(torch.nn.Module):
 
     left_padding = torch.FloatTensor(width, hidden_size)
     right_padding = torch.FloatTensor(width, hidden_size)
-    left_weights = torch.FloatTensor(width + 1).fill_(1. / (width + 1))
-    right_weights = torch.FloatTensor(width + 1).fill_(1. / (width + 1))
+    left_weights = torch.FloatTensor(width + 1)
+    right_weights = torch.FloatTensor(width + 1)
 
     self.left_padding = torch.nn.Parameter(left_padding)
     self.right_padding = torch.nn.Parameter(right_padding)

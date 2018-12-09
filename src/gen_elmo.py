@@ -302,7 +302,7 @@ class Model(torch.nn.Module):
     elif encoder_name == 'lstm':
       encoder_output = self.encoder(token_embedding)
     elif encoder_name in ('bengio03highway', 'bengio03resnet', 'lblhighway', 'lblresnet', 'selfattn'):
-      encoder_output = self.encoder(token_embedding)[0]
+      encoder_output = self.encoder(token_embedding)
       sz = encoder_output.size()
       token_embedding = torch.cat([token_embedding, token_embedding], dim=2).view(1, sz[1], sz[2], sz[3])
       encoder_output = torch.cat([token_embedding, encoder_output], dim=0)

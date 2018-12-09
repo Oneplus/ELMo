@@ -141,11 +141,8 @@ class Model(torch.nn.Module):
     else:
       raise ValueError('Unknown encoder name: {}'.format(opt.encoder.lower()))
 
-    if use_cuda:
-      self.weights = torch.cuda.FloatTensor(n_layers).fill_(1./n_layers)
-    else:
-      self.weights = torch.FloatTensor(n_layers).fill_(1./n_layers)
-    self.weights = torch.autograd.Variable(self.weights, requires_grad=True)
+    weights = torch.randn(n_layers)
+    self.weights = torch.nn.Parameter(weights, requires_grad=True)
 
     # CRF: as suggested by Reimers and Gurevych [2017]
     self.classify_layer = CRFLayer(encoder_output_dim, n_class, use_cuda)
@@ -395,6 +392,7 @@ def train():
     logging.info('Total embedding time: {:.2f}s'.format(model.emb_time / (epoch + 1)))
     logging.info('Total classify time: {:.2f}s'.format(model.classify_time / (epoch + 1)))
 
+  logging.info("weights: {}".format(model.weights.data.numpy()))
   logging.info("best_valid_acc: {:.6f}".format(best_valid))
   logging.info("test_acc: {:.6f}".format(test_result))
 

@@ -176,13 +176,13 @@ class Model(torch.nn.Module):
     forward, backward = encoder_output.split(self.output_dim, 2)
 
     word_inp = torch.autograd.Variable(word_inp)
+    mask1 = torch.autograd.Variable(mask_package[1], requires_grad=False)
+    mask2 = torch.autograd.Variable(mask_package[2], requires_grad=False)
+
     if self.use_cuda:
       word_inp = word_inp.cuda()
-
-    mask1 = torch.autograd.Variable(mask_package[1]).cuda() if self.use_cuda else \
-      torch.autograd.Variable(mask_package[1])
-    mask2 = torch.autograd.Variable(mask_package[2]).cuda() if self.use_cuda else \
-      torch.autograd.Variable(mask_package[2])
+      mask1 = mask1.cuda()
+      mask2 = mask2.cuda()
 
     forward_x = forward.contiguous().view(-1, self.output_dim).index_select(0, mask1)
     forward_y = word_inp.contiguous().view(-1).index_select(0, mask2)

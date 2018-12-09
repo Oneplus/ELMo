@@ -60,8 +60,8 @@ class Bengio03HighwayBiLm(torch.nn.Module):
       right_inp = new_inputs.narrow(1, end, self.width + 1).contiguous().view(batch_size, -1)
 
       # left_out: [32 x 512]
-      left_out = self.dropout(self.activation(self.left_project(self.dropout(left_inp))))
-      right_out = self.dropout(self.activation(self.right_project(self.dropout(right_inp))))
+      left_out = self.dropout(self.activation(self.left_project(left_inp)))
+      right_out = self.dropout(self.activation(self.right_project(right_inp)))
 
       # left_out: [32 x 512]
       left_out = self.left_highway(left_out)
@@ -133,7 +133,7 @@ class Bengio03ResNetBiLm(torch.nn.Module):
                             inputs,
                             self.right_padding.expand(batch_size, -1, -1)], dim=1)
 
-    all_layers_along_steps, last_layer_along_steps = [], []
+    all_layers_along_steps = []
     for start in range(sequence_len):
       end = start + self.width
       # left_inp: [32 x 8 x 512]
@@ -152,7 +152,6 @@ class Bengio03ResNetBiLm(torch.nn.Module):
         # layers[-1]: [32 x 1024]
         layers.append(torch.cat([left_out, right_out], dim=1))
 
-      last_layer_along_steps.append(layers[-1])
       # all_layers[-1]: [2 x 32 x 1024]
       all_layers_along_steps.append(torch.stack(layers, dim=0))
 

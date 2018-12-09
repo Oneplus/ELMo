@@ -147,7 +147,7 @@ class SelfAttentiveLBLBiLM(torch.nn.Module):
     new_left_inputs = self.left_attn(new_inputs, new_inputs, new_inputs, left_mask)
     new_right_inputs = self.right_attn(new_inputs, new_inputs, new_inputs, right_mask)
 
-    all_layers_along_steps, last_layer_along_steps = [], []
+    all_layers_along_steps = []
     for start in range(sequence_len):
       end = start + self.width
       left_out = new_left_inputs[:, end, :]
@@ -157,11 +157,10 @@ class SelfAttentiveLBLBiLM(torch.nn.Module):
         left_out = left_out + new_inputs.narrow(1, start, self.width + 1).transpose(-2, -1).matmul(self.left_weights)
         right_out = right_out + new_inputs.narrow(1, end, self.width + 1).transpose(-2, -1).matmul(self.right_weights)
 
-      left_out = self.left_block(self.dropout(left_out))
-      right_out = self.right_block(self.dropout(right_out))
+      left_out = self.left_block(left_out)
+      right_out = self.right_block(right_out)
       out = torch.cat([left_out, right_out], dim=1)
 
-      last_layer_along_steps.append(out)
       all_layers_along_steps.append(out.unsqueeze(0))
 
     return torch.stack(all_layers_along_steps, dim=2)

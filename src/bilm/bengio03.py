@@ -52,7 +52,7 @@ class Bengio03HighwayBiLm(torch.nn.Module):
                             inputs,
                             self.right_padding.expand(batch_size, -1, -1)], dim=1)
 
-    all_layers_along_steps, last_layer_along_steps = [], []
+    all_layers_along_steps = []
     for start in range(sequence_len):
       end = start + self.width
       # left_inp: [32 x 9 x 512]
@@ -70,12 +70,11 @@ class Bengio03HighwayBiLm(torch.nn.Module):
       # out: [32 x 1024]
       out = torch.cat([left_out, right_out], dim=1)
 
-      last_layer_along_steps.append(out)
       # all_layers[-1]: [1 x 32 x 1024]
       all_layers_along_steps.append(out.unsqueeze(0))
 
     # ret[0]: [1 x 32 x 10 x 1024]
-    return torch.stack(all_layers_along_steps, dim=2), torch.stack(last_layer_along_steps, dim=1)
+    return torch.stack(all_layers_along_steps, dim=2)
 
 
 class Bengio03ResNetBiLm(torch.nn.Module):
@@ -89,7 +88,7 @@ class Bengio03ResNetBiLm(torch.nn.Module):
     self.activation = torch.nn.ReLU()
 
     width = config['encoder']['width']
-    input_size = config['encoder']['projection_dim'] * width
+    input_size = config['encoder']['projection_dim'] * (width + 1)
     hidden_size = config['encoder']['projection_dim']
     num_layers = config['encoder']['n_layers']
 
@@ -138,8 +137,8 @@ class Bengio03ResNetBiLm(torch.nn.Module):
     for start in range(sequence_len):
       end = start + self.width
       # left_inp: [32 x 8 x 512]
-      left_inp = new_inputs.narrow(1, start, self.width).contiguous().view(batch_size, -1)
-      right_inp = new_inputs.narrow(1, end + 1, self.width).contiguous().view(batch_size, -1)
+      left_inp = new_inputs.narrow(1, start, self.width + 1).contiguous().view(batch_size, -1)
+      right_inp = new_inputs.narrow(1, end, self.width + 1).contiguous().view(batch_size, -1)
 
       # left_out: [32 x 512]
       left_out = self.dropout(self.activation(self.left_project(left_inp)))
@@ -158,4 +157,4 @@ class Bengio03ResNetBiLm(torch.nn.Module):
       all_layers_along_steps.append(torch.stack(layers, dim=0))
 
     # ret[0]: [2 x 32 x 10 x 1024]
-    return torch.stack(all_layers_along_steps, dim=2), torch.stack(last_layer_along_steps, dim=1)
+    return torch.stack(all_layers_along_steps, dim=2)

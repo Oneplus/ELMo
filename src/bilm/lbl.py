@@ -24,8 +24,8 @@ class LBLHighwayBiLm(torch.nn.Module):
 
     left_padding = torch.FloatTensor(width, hidden_size)
     right_padding = torch.FloatTensor(width, hidden_size)
-    left_weights = torch.FloatTensor(width + 1).fill_(1. / (width + 1))
-    right_weights = torch.FloatTensor(width + 1).fill_(1. / (width + 1))
+    left_weights = torch.FloatTensor(width + 1)
+    right_weights = torch.FloatTensor(width + 1)
 
     self.left_padding = torch.nn.Parameter(left_padding)
     self.right_padding = torch.nn.Parameter(right_padding)
@@ -49,7 +49,7 @@ class LBLHighwayBiLm(torch.nn.Module):
                             inputs,
                             self.right_padding.expand(batch_size, -1, -1)], dim=1)
 
-    all_layers_along_steps, last_layer_along_steps = [], []
+    all_layers_along_steps = []
     for start in range(sequence_len):
       end = start + self.width
       left_inp = new_inputs.narrow(1, start, self.width + 1)
@@ -62,10 +62,9 @@ class LBLHighwayBiLm(torch.nn.Module):
       right_out = self.right_block(self.dropout(right_out))
       out = torch.cat([left_out, right_out], dim=1)
 
-      last_layer_along_steps.append(out)
       all_layers_along_steps.append(out.unsqueeze(0))
 
-    return torch.stack(all_layers_along_steps, dim=2), torch.stack(last_layer_along_steps, dim=1)
+    return torch.stack(all_layers_along_steps, dim=2)
 
 
 class LBLResNetBiLm(torch.nn.Module):
@@ -120,7 +119,7 @@ class LBLResNetBiLm(torch.nn.Module):
                             inputs,
                             self.right_padding.expand(batch_size, -1, -1)], dim=1)
 
-    all_layers_along_steps, last_layer_along_steps = [], []
+    all_layers_along_steps = []
     for start in range(sequence_len):
       end = start + self.width
       left_inp = new_inputs.narrow(1, start, self.width)
@@ -135,7 +134,6 @@ class LBLResNetBiLm(torch.nn.Module):
         right_out = self.right_blocks[i](right_out, self.right_linears[i])
         layers.append(torch.cat([left_out, right_out], dim=1))
 
-      last_layer_along_steps.append(layers[-1])
       all_layers_along_steps.append(torch.stack(layers, dim=0))
 
-    return torch.stack(all_layers_along_steps, dim=2), torch.stack(last_layer_along_steps, dim=1)
+    return torch.stack(all_layers_along_steps, dim=2)

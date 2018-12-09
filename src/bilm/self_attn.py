@@ -164,4 +164,4 @@ class SelfAttentiveLBLBiLM(torch.nn.Module):
       last_layer_along_steps.append(out)
       all_layers_along_steps.append(out.unsqueeze(0))
 
-    return torch.stack(all_layers_along_steps, dim=2), torch.stack(last_layer_along_steps, dim=1)
+    return torch.stack(all_layers_along_steps, dim=2)

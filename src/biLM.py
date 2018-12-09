@@ -160,12 +160,15 @@ class Model(torch.nn.Module):
       mask = torch.autograd.Variable(mask_package[0]).cuda() if self.use_cuda else \
         torch.autograd.Variable(mask_package[0])
       encoder_output = self.encoder(token_embedding, mask)
-      encoder_output = encoder_output[1]
+      n_layers = encoder_output.size()[0]
+      encoder_output = encoder_output[n_layers - 1]
       # [batch_size, len, hidden_size]
     elif encoder_name == 'lstm':
       encoder_output = self.encoder(token_embedding)
     elif encoder_name in ('bengio03highway', 'bengio03resnet', 'lblhighway', 'lblresnet', 'selfattn'):
-      encoder_output = self.encoder(token_embedding)[1]
+      encoder_output = self.encoder(token_embedding)
+      n_layers = encoder_output.size()[0]
+      encoder_output = encoder_output[n_layers - 1]
     else:
       raise ValueError('Unknown encoder name: {}'.format(encoder_name))
 
@@ -259,10 +262,11 @@ def train_model(epoch, opt, model, optimizer,
       start_time = time.time()
 
     if cnt % opt.eval_steps == 0 or cnt % train_batch.num_batches() == 0:
+      train_ppl = np.exp(total_loss / total_tag)
+      logging.info("Epoch={} iter={} lr={:.6f} train_ppl={:.6f}".format(
+        epoch, cnt, optimizer.param_groups[0]['lr'], train_ppl))
+
       if valid_batch is None:
-        train_ppl = np.exp(total_loss / total_tag)
-        logging.info("Epoch={} iter={} lr={:.6f} train_ppl={:.6f}".format(
-          epoch, cnt, optimizer.param_groups[0]['lr'], train_ppl))
         if train_ppl < best_train:
           best_train = train_ppl
           logging.info("New record achieved on training dataset!")

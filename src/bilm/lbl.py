@@ -1,6 +1,7 @@
 from __future__ import absolute_import
 from __future__ import unicode_literals
 import torch
+import numpy as np
 from modules.highway import Highway
 from modules.positional_encoding import PositionalEncoding
 from modules.sublayer_connection import SublayerConnection
@@ -22,15 +23,15 @@ class LBLHighwayBiLm(torch.nn.Module):
     input_size = config['encoder']['projection_dim']
     hidden_size = config['encoder']['projection_dim']
 
-    left_padding = torch.FloatTensor(width, hidden_size)
-    right_padding = torch.FloatTensor(width, hidden_size)
-    left_weights = torch.FloatTensor(width + 1)
-    right_weights = torch.FloatTensor(width + 1)
+    left_padding = torch.randn(width, hidden_size) / np.sqrt(hidden_size)
+    right_padding = torch.randn(width, hidden_size) / np.sqrt(hidden_size)
+    left_weights = torch.randn(width + 1)
+    right_weights = torch.randn(width + 1)
 
-    self.left_padding = torch.nn.Parameter(left_padding)
-    self.right_padding = torch.nn.Parameter(right_padding)
-    self.left_weights = torch.nn.Parameter(left_weights)
-    self.right_weights = torch.nn.Parameter(right_weights)
+    self.left_padding = torch.nn.Parameter(left_padding, requires_grad=True)
+    self.right_padding = torch.nn.Parameter(right_padding, requires_grad=True)
+    self.left_weights = torch.nn.Parameter(left_weights, requires_grad=True)
+    self.right_weights = torch.nn.Parameter(right_weights, requires_grad=True)
 
     if self.use_position:
       self.position = PositionalEncoding(config['encoder']['projection_dim'], self.config['dropout'])
@@ -82,15 +83,15 @@ class LBLResNetBiLm(torch.nn.Module):
     hidden_size = config['encoder']['projection_dim']
     num_layers = config['encoder']['n_layers']
 
-    left_padding = torch.FloatTensor(width, hidden_size)
-    right_padding = torch.FloatTensor(width, hidden_size)
-    left_weights = torch.FloatTensor(width + 1)
-    right_weights = torch.FloatTensor(width + 1)
+    left_padding = torch.randn(width, hidden_size) / np.sqrt(hidden_size)
+    right_padding = torch.randn(width, hidden_size) / np.sqrt(hidden_size)
+    left_weights = torch.randn(width + 1)
+    right_weights = torch.randn(width + 1)
 
-    self.left_padding = torch.nn.Parameter(left_padding)
-    self.right_padding = torch.nn.Parameter(right_padding)
-    self.left_weights = torch.nn.Parameter(left_weights)
-    self.right_weights = torch.nn.Parameter(right_weights)
+    self.left_padding = torch.nn.Parameter(left_padding, requires_grad=True)
+    self.right_padding = torch.nn.Parameter(right_padding, requires_grad=True)
+    self.left_weights = torch.nn.Parameter(left_weights, requires_grad=True)
+    self.right_weights = torch.nn.Parameter(right_weights, requires_grad=True)
 
     if self.use_position:
       self.position = PositionalEncoding(config['encoder']['projection_dim'], self.config['dropout'])

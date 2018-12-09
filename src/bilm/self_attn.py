@@ -100,8 +100,10 @@ class SelfAttentiveLBLBiLM(torch.nn.Module):
     self.use_relative_position_weights = config['encoder'].get('relative_position_weights', False)
     self.num_layers = config['encoder']['n_layers']
 
-    self.left_attn = MultiHeadedAttention(64, config['encoder']['projection_dim'], config['dropout'])
-    self.right_attn = MultiHeadedAttention(64, config['encoder']['projection_dim'], config['dropout'])
+    self.left_attn = MultiHeadedAttention(config['encoder']['n_heads'],
+                                          config['encoder']['projection_dim'], config['dropout'])
+    self.right_attn = MultiHeadedAttention(config['encoder']['n_heads'],
+                                           config['encoder']['projection_dim'], config['dropout'])
     self.dropout = torch.nn.Dropout(self.config['dropout'])
     self.activation = torch.nn.ReLU()
 
@@ -109,23 +111,22 @@ class SelfAttentiveLBLBiLM(torch.nn.Module):
     input_size = config['encoder']['projection_dim']
     hidden_size = config['encoder']['projection_dim']
 
-    left_padding = torch.FloatTensor(width, hidden_size)
-    right_padding = torch.FloatTensor(width, hidden_size)
-
-    self.left_padding = torch.nn.Parameter(left_padding)
-    self.right_padding = torch.nn.Parameter(right_padding)
+    left_padding = torch.randn(width, hidden_size) / np.sqrt(hidden_size)
+    right_padding = torch.randn(width, hidden_size) / np.sqrt(hidden_size)
+    self.left_padding = torch.nn.Parameter(left_padding, requires_grad=True)
+    self.right_padding = torch.nn.Parameter(right_padding, requires_grad=True)
 
     if self.use_relative_position_weights:
-      left_weights = torch.FloatTensor(width + 1)
-      right_weights = torch.FloatTensor(width + 1)
-      self.left_weights = torch.nn.Parameter(left_weights)
-      self.right_weights = torch.nn.Parameter(right_weights)
+      left_weights = torch.randn(width + 1)
+      right_weights = torch.randn(width + 1)
+      self.left_weights = torch.nn.Parameter(left_weights, requires_grad=True)
+      self.right_weights = torch.nn.Parameter(right_weights, requires_grad=True)
 
     if self.use_position:
       self.position = PositionalEncoding(config['encoder']['projection_dim'], self.config['dropout'])
 
-    self.left_block = Highway(hidden_size, num_layers=self.num_layers)
-    self.right_block = Highway(hidden_size, num_layers=self.num_layers)
+    self.left_block = Highway(hidden_size, num_layers=config['encoder']['n_highway'])
+    self.right_block = Highway(hidden_size, num_layers=config['encoder']['n_highway'])
 
     self.input_size = input_size
     self.width = width

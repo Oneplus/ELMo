@@ -1,6 +1,7 @@
 from __future__ import absolute_import
 from __future__ import unicode_literals
 import torch
+import numpy as np
 from modules.highway import Highway
 from modules.positional_encoding import PositionalEncoding
 from modules.positionwise_feedforward import PositionwiseFeedForward
@@ -22,11 +23,10 @@ class Bengio03HighwayBiLm(torch.nn.Module):
     input_size = config['encoder']['projection_dim'] * (width + 1)
     hidden_size = config['encoder']['projection_dim']
 
-    left_padding = torch.FloatTensor(width, hidden_size)
-    right_padding = torch.FloatTensor(width, hidden_size)
-
-    self.left_padding = torch.nn.Parameter(left_padding)
-    self.right_padding = torch.nn.Parameter(right_padding)
+    left_padding = torch.randn(width, hidden_size) / np.sqrt(hidden_size)
+    right_padding = torch.randn(width, hidden_size) / np.sqrt(hidden_size)
+    self.left_padding = torch.nn.Parameter(left_padding, requires_grad=True)
+    self.right_padding = torch.nn.Parameter(right_padding, requires_grad=True)
 
     if self.use_position:
       self.position = PositionalEncoding(config['encoder']['projection_dim'], self.config['dropout'])
@@ -92,11 +92,10 @@ class Bengio03ResNetBiLm(torch.nn.Module):
     hidden_size = config['encoder']['projection_dim']
     num_layers = config['encoder']['n_layers']
 
-    left_padding = torch.FloatTensor(width, hidden_size)
-    right_padding = torch.FloatTensor(width, hidden_size)
-
-    self.left_padding = torch.nn.Parameter(left_padding)
-    self.right_padding = torch.nn.Parameter(right_padding)
+    left_padding = torch.randn(width, hidden_size) / np.sqrt(hidden_size)
+    right_padding = torch.randn(width, hidden_size) / np.sqrt(hidden_size)
+    self.left_padding = torch.nn.Parameter(left_padding, requires_grad=True)
+    self.right_padding = torch.nn.Parameter(right_padding, requires_grad=True)
 
     if self.use_position:
       self.position = PositionalEncoding(config['encoder']['projection_dim'], self.config['dropout'])

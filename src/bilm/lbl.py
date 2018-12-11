@@ -14,58 +14,78 @@ class LBLHighwayBiLm(torch.nn.Module):
     self.config = config
     self.use_cuda = use_cuda
     self.use_position = config['encoder'].get('position', False)
-    self.num_layers = config['encoder']['n_layers']
+    self.n_layers = n_layers = config['encoder']['n_layers']
+    self.n_highway = n_highway = config['encoder']['n_highway']
 
     self.dropout = torch.nn.Dropout(self.config['dropout'])
     self.activation = torch.nn.ReLU()
 
-    width = config['encoder']['width']
-    input_size = config['encoder']['projection_dim']
-    hidden_size = config['encoder']['projection_dim']
+    self.width = width = config['encoder']['width']
+    self.input_size = input_size = config['encoder']['projection_dim']
+    self.hidden_size = hidden_size = config['encoder']['projection_dim']
 
-    left_padding = torch.randn(width, hidden_size) / np.sqrt(hidden_size)
-    right_padding = torch.randn(width, hidden_size) / np.sqrt(hidden_size)
-    left_weights = torch.randn(width + 1)
-    right_weights = torch.randn(width + 1)
+    forward_paddings, backward_paddings = [], []
+    forward_weights, backward_weights = [], []
+    forward_blocks, backward_blocks = [], []
 
-    self.left_padding = torch.nn.Parameter(left_padding, requires_grad=True)
-    self.right_padding = torch.nn.Parameter(right_padding, requires_grad=True)
-    self.left_weights = torch.nn.Parameter(left_weights, requires_grad=True)
-    self.right_weights = torch.nn.Parameter(right_weights, requires_grad=True)
+    for _ in range(n_layers):
+      forward_paddings.append(torch.nn.Parameter(torch.randn(width, hidden_size) / np.sqrt(hidden_size)))
+      backward_paddings.append(torch.nn.Parameter(torch.randn(width, hidden_size) / np.sqrt(hidden_size)))
+
+      forward_weights.append(torch.nn.Parameter(torch.randn(width + 1)))
+      backward_weights.append(torch.nn.Parameter(torch.randn(width + 1)))
+
+      forward_blocks.append(Highway(hidden_size, num_layers=n_highway))
+      backward_blocks.append(Highway(hidden_size, num_layers=n_highway))
+
+    self.forward_paddings = torch.nn.ParameterList(forward_paddings)
+    self.backward_paddings = torch.nn.ParameterList(backward_paddings)
+    self.forward_weights = torch.nn.ParameterList(forward_weights)
+    self.backward_weights = torch.nn.ParameterList(backward_weights)
+    self.forward_blocks = torch.nn.ModuleList(forward_blocks)
+    self.backward_blocks = torch.nn.ModuleList(backward_blocks)
 
     if self.use_position:
-      self.position = PositionalEncoding(config['encoder']['projection_dim'], self.config['dropout'])
-
-    self.left_block = Highway(hidden_size, num_layers=self.num_layers)
-    self.right_block = Highway(hidden_size, num_layers=self.num_layers)
-
-    self.input_size = input_size
-    self.width = width
+      self.position = PositionalEncoding(hidden_size, self.config['dropout'])
 
   def forward(self, inputs):
     batch_size, sequence_len, dim = inputs.size()
-    if self.use_position:
-      inputs = self.position(inputs)
-    new_inputs = torch.cat([self.left_padding.expand(batch_size, -1, -1),
-                            inputs,
-                            self.right_padding.expand(batch_size, -1, -1)], dim=1)
-
     all_layers_along_steps = []
-    for start in range(sequence_len):
-      end = start + self.width
-      left_inp = new_inputs.narrow(1, start, self.width + 1)
-      left_out = left_inp.transpose(-2, -1).matmul(self.left_weights)
 
-      right_inp = new_inputs.narrow(1, end, self.width + 1)
-      right_out = right_inp.transpose(-2, -1).matmul(self.right_weights)
+    last_forward_inputs = inputs
+    last_backward_inputs = inputs
+    for i in range(self.n_layers):
+      if self.use_position:
+        last_forward_inputs = self.position(last_forward_inputs)
+        last_backward_inputs = self.position(last_backward_inputs)
 
-      left_out = self.left_block(left_out)
-      right_out = self.right_block(right_out)
-      out = torch.cat([left_out, right_out], dim=1)
+      padded_last_forward_inputs = torch.cat([self.forward_paddings[i].expand(batch_size, -1, -1),
+                                              last_forward_inputs,
+                                              self.backward_paddings[i].expand(batch_size, -1, -1)], dim=1)
+      padded_last_backward_inputs = torch.cat([self.forward_paddings[i].expand(batch_size, -1, -1),
+                                               last_backward_inputs,
+                                               self.backward_paddings[i].expand(batch_size, -1, -1)], dim=1)
 
-      all_layers_along_steps.append(out.unsqueeze(0))
+      forward_steps, backward_steps = [], []
+      for start in range(sequence_len):
+        end = start + self.width
+        forward_input = padded_last_forward_inputs.narrow(1, start, self.width + 1)
+        forward_output = forward_input.transpose(-2, -1).matmul(self.forward_weights[i])
+        forward_output = self.forward_blocks[i](forward_output)
 
-    return torch.stack(all_layers_along_steps, dim=2)
+        backward_input = padded_last_backward_inputs.narrow(1, end, self.width + 1)
+        backward_output = backward_input.transpose(-2, -1).matmul(self.backward_weights[i])
+        backward_output = self.backward_blocks[i](backward_output)
+
+        forward_steps.append(forward_output)
+        backward_steps.append(backward_output)
+
+      last_forward_inputs = torch.stack(forward_steps, dim=1)
+      last_backward_inputs = torch.stack(backward_steps, dim=1)
+
+      all_layers_along_steps.append(torch.cat([last_forward_inputs, last_backward_inputs], dim=-1))
+
+    return torch.stack(all_layers_along_steps, dim=0)
 
 
 class LBLResNetBiLm(torch.nn.Module):
@@ -78,63 +98,74 @@ class LBLResNetBiLm(torch.nn.Module):
     self.dropout = torch.nn.Dropout(self.config['dropout'])
     self.activation = torch.nn.ReLU()
 
-    width = config['encoder']['width']
-    input_size = config['encoder']['projection_dim']
-    hidden_size = config['encoder']['projection_dim']
-    num_layers = config['encoder']['n_layers']
+    self.width = width = config['encoder']['width']
+    self.input_size = input_size = config['encoder']['projection_dim']
+    self.hidden_size = hidden_size = config['encoder']['projection_dim']
+    self.n_layers = n_layers = config['encoder']['n_layers']
 
-    left_padding = torch.randn(width, hidden_size) / np.sqrt(hidden_size)
-    right_padding = torch.randn(width, hidden_size) / np.sqrt(hidden_size)
-    left_weights = torch.randn(width + 1)
-    right_weights = torch.randn(width + 1)
+    forward_paddings, backward_paddings = [], []
+    forward_weights, backward_weights = [], []
+    for _ in range(self.n_layers):
+      forward_paddings.append(torch.nn.Parameter(torch.randn(width, hidden_size) / np.sqrt(hidden_size)))
+      backward_paddings.append(torch.nn.Parameter(torch.randn(width, hidden_size) / np.sqrt(hidden_size)))
+      forward_weights.append(torch.nn.Parameter(torch.randn(width + 1)))
+      backward_weights.append(torch.nn.Parameter(torch.randn(width + 1)))
 
-    self.left_padding = torch.nn.Parameter(left_padding, requires_grad=True)
-    self.right_padding = torch.nn.Parameter(right_padding, requires_grad=True)
-    self.left_weights = torch.nn.Parameter(left_weights, requires_grad=True)
-    self.right_weights = torch.nn.Parameter(right_weights, requires_grad=True)
+    self.forward_paddings = torch.nn.ParameterList(forward_paddings)
+    self.backward_paddings = torch.nn.ParameterList(backward_paddings)
+    self.forward_weights = torch.nn.Parameter(forward_weights)
+    self.backward_weights = torch.nn.Parameter(backward_weights)
 
     if self.use_position:
-      self.position = PositionalEncoding(config['encoder']['projection_dim'], self.config['dropout'])
+      self.position = PositionalEncoding(hidden_size, self.config['dropout'])
 
-    self.left_linears = torch.nn.ModuleList(
+    self.forward_linears = torch.nn.ModuleList(
       [PositionwiseFeedForward(hidden_size, hidden_size, self.config['dropout'])
-       for _ in range(num_layers)])
-    self.right_linears = torch.nn.ModuleList(
+       for _ in range(n_layers)])
+    self.backward_linears = torch.nn.ModuleList(
       [PositionwiseFeedForward(hidden_size, hidden_size, self.config['dropout'])
-       for _ in range(num_layers)])
+       for _ in range(n_layers)])
 
-    self.left_blocks = torch.nn.ModuleList(
-      [SublayerConnection(hidden_size, self.config['dropout']) for _ in range(num_layers)])
-    self.right_blocks = torch.nn.ModuleList(
-      [SublayerConnection(hidden_size, self.config['dropout']) for _ in range(num_layers)])
-
-    self.input_size = input_size
-    self.num_layers = num_layers
-    self.width = width
+    self.forward_blocks = torch.nn.ModuleList(
+      [SublayerConnection(hidden_size, self.config['dropout']) for _ in range(n_layers)])
+    self.backward_blocks = torch.nn.ModuleList(
+      [SublayerConnection(hidden_size, self.config['dropout']) for _ in range(n_layers)])
 
   def forward(self, inputs):
     batch_size, sequence_len, dim = inputs.size()
-    if self.use_position:
-      inputs = self.position(inputs)
-    new_inputs = torch.cat([self.left_padding.expand(batch_size, -1, -1),
-                            inputs,
-                            self.right_padding.expand(batch_size, -1, -1)], dim=1)
-
     all_layers_along_steps = []
-    for start in range(sequence_len):
-      end = start + self.width
-      left_inp = new_inputs.narrow(1, start, self.width + 1)
-      left_out = left_inp.transpose(-2, -1).matmul(self.left_weights)
 
-      right_inp = new_inputs.narrow(1, end, self.width + 1)
-      right_out = right_inp.transpose(-2, -1).matmul(self.right_weights)
+    last_forward_inputs = inputs
+    last_backward_inputs = inputs
+    for i in range(self.n_layers):
+      if self.use_position:
+        last_forward_inputs = self.position(last_forward_inputs)
+        last_backward_inputs = self.position(last_backward_inputs)
 
-      layers = []
-      for i in range(self.num_layers):
-        left_out = self.left_blocks[i](left_out, self.left_linears[i])
-        right_out = self.right_blocks[i](right_out, self.right_linears[i])
-        layers.append(torch.cat([left_out, right_out], dim=1))
+      padded_last_forward_inputs = torch.cat([self.forward_paddings[i].expand(batch_size, -1, -1),
+                                              last_forward_inputs,
+                                              self.backward_paddings[i].expand(batch_size, -1, -1)], dim=1)
+      padded_last_backward_inputs = torch.cat([self.forward_paddings[i].expand(batch_size, -1, -1),
+                                               last_backward_inputs,
+                                               self.backward_paddings[i].expand(batch_size, -1, -1)], dim=1)
 
-      all_layers_along_steps.append(torch.stack(layers, dim=0))
+      forward_steps, backward_steps = [], []
+      for start in range(sequence_len):
+        end = start + self.width
+        forward_input = padded_last_forward_inputs.narrow(1, start, self.width + 1)
+        forward_output = forward_input.transpose(-2, -1).matmul(self.forward_weights[i])
+        forward_output = self.forward_blocks[i](forward_output, self.forward_linears[i])
 
-    return torch.stack(all_layers_along_steps, dim=2)
+        backward_input = padded_last_backward_inputs.narrow(1, end, self.width + 1)
+        backward_output = backward_input.transpose(-2, -1).matmul(self.backward_weights[i])
+        backward_output = self.backward_blocks[i](backward_output, self.backward_linears[i])
+
+        forward_steps.append(forward_output)
+        backward_steps.append(backward_output)
+
+      last_forward_inputs = torch.stack(forward_steps, dim=1)
+      last_backward_inputs = torch.stack(backward_steps, dim=1)
+
+      all_layers_along_steps.append(torch.cat([last_forward_inputs, last_backward_inputs], dim=-1))
+
+    return torch.stack(all_layers_along_steps, dim=0)

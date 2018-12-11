@@ -14,30 +14,38 @@ class Bengio03HighwayBiLm(torch.nn.Module):
     self.config = config
     self.use_cuda = use_cuda
     self.use_position = config['encoder'].get('position', False)
-    self.num_layers = config['encoder']['n_layers']
+    self.n_layers = n_layers = config['encoder']['n_layers']
+    self.n_highway = n_highway = config['encoder']['n_highway']
 
     self.dropout = torch.nn.Dropout(self.config['dropout'])
     self.activation = torch.nn.ReLU()
 
-    width = config['encoder']['width']
-    input_size = config['encoder']['projection_dim'] * (width + 1)
-    hidden_size = config['encoder']['projection_dim']
+    self.width = width = config['encoder']['width']
+    self.input_size = input_size = config['encoder']['projection_dim'] * (width + 1)
+    self.hidden_size = hidden_size = config['encoder']['projection_dim']
 
-    left_padding = torch.randn(width, hidden_size) / np.sqrt(hidden_size)
-    right_padding = torch.randn(width, hidden_size) / np.sqrt(hidden_size)
-    self.left_padding = torch.nn.Parameter(left_padding, requires_grad=True)
-    self.right_padding = torch.nn.Parameter(right_padding, requires_grad=True)
+    forward_paddings, backward_paddings = [], []
+    forward_blocks, backward_blocks = [], []
+    forward_projects, backward_projects = [], []
+    for i in range(n_layers):
+      forward_paddings.append(torch.nn.Parameter(torch.randn(width, hidden_size) / np.sqrt(hidden_size)))
+      backward_paddings.append(torch.nn.Parameter(torch.randn(width, hidden_size) / np.sqrt(hidden_size)))
+
+      forward_blocks.append(Highway(hidden_size, num_layers=n_highway))
+      backward_blocks.append(Highway(hidden_size, num_layers=n_highway))
+
+      forward_projects.append(torch.nn.Linear(input_size, hidden_size))
+      backward_projects.append(torch.nn.Linear(input_size, hidden_size))
+
+    self.forward_projects = torch.nn.ModuleList(forward_projects)
+    self.backward_projects = torch.nn.ModuleList(backward_projects)
+    self.forward_paddings = torch.nn.ParameterList(forward_paddings)
+    self.backward_paddings = torch.nn.ParameterList(backward_paddings)
+    self.forward_blocks = torch.nn.ModuleList(forward_blocks)
+    self.backward_blocks = torch.nn.ModuleList(backward_blocks)
 
     if self.use_position:
-      self.position = PositionalEncoding(config['encoder']['projection_dim'], self.config['dropout'])
-
-    self.left_project = torch.nn.Linear(input_size, hidden_size)
-    self.right_project = torch.nn.Linear(input_size, hidden_size)
-    self.left_highway = Highway(hidden_size, num_layers=self.num_layers)
-    self.right_highway = Highway(hidden_size, num_layers=self.num_layers)
-
-    self.input_size = input_size
-    self.width = width
+      self.position = PositionalEncoding(hidden_size, self.config['dropout'])
 
   def forward(self, inputs):
     """
@@ -46,35 +54,42 @@ class Bengio03HighwayBiLm(torch.nn.Module):
     :return:
     """
     batch_size, sequence_len, dim = inputs.size()
-    if self.use_position:
-      inputs = self.position(inputs)
-    new_inputs = torch.cat([self.left_padding.expand(batch_size, -1, -1),
-                            inputs,
-                            self.right_padding.expand(batch_size, -1, -1)], dim=1)
-
     all_layers_along_steps = []
-    for start in range(sequence_len):
-      end = start + self.width
-      # left_inp: [32 x 9 x 512]
-      left_inp = new_inputs.narrow(1, start, self.width + 1).contiguous().view(batch_size, -1)
-      right_inp = new_inputs.narrow(1, end, self.width + 1).contiguous().view(batch_size, -1)
 
-      # left_out: [32 x 512]
-      left_out = self.dropout(self.activation(self.left_project(left_inp)))
-      right_out = self.dropout(self.activation(self.right_project(right_inp)))
+    last_forward_inputs = inputs
+    last_backward_inputs = inputs
+    for i in range(self.n_layers):
+      if self.use_position:
+        last_forward_inputs = self.position(last_forward_inputs)
+        last_backward_inputs = self.position(last_backward_inputs)
 
-      # left_out: [32 x 512]
-      left_out = self.left_highway(left_out)
-      right_out = self.right_highway(right_out)
+      padded_last_forward_inputs = torch.cat([self.forward_paddings[i].expand(batch_size, -1, -1),
+                                              last_forward_inputs,
+                                              self.backward_paddings[i].expand(batch_size, -1, -1)], dim=1)
+      padded_last_backward_inputs = torch.cat([self.forward_paddings[i].expand(batch_size, -1, -1),
+                                               last_backward_inputs,
+                                               self.backward_paddings[i].expand(batch_size, -1, -1)], dim=1)
 
-      # out: [32 x 1024]
-      out = torch.cat([left_out, right_out], dim=1)
+      forward_steps, backward_steps = [], []
+      for start in range(sequence_len):
+        end = start + self.width
+        forward_input = padded_last_forward_inputs.narrow(1, start, self.width + 1).contiguous().view(batch_size, -1)
+        forward_output = self.activation(self.dropout(self.forward_projects[i](forward_input)))
+        forward_output = self.forward_blocks[i](forward_output)
 
-      # all_layers[-1]: [1 x 32 x 1024]
-      all_layers_along_steps.append(out.unsqueeze(0))
+        backward_input = padded_last_backward_inputs.narrow(1, end, self.width + 1).contiguous().view(batch_size, -1)
+        backward_output = self.activation(self.dropout(self.backward_projects[i](backward_input)))
+        backward_output = self.backward_blocks[i](backward_output)
 
-    # ret[0]: [1 x 32 x 10 x 1024]
-    return torch.stack(all_layers_along_steps, dim=2)
+        forward_steps.append(forward_output)
+        backward_steps.append(backward_output)
+
+      last_forward_inputs = torch.stack(forward_steps, dim=1)
+      last_backward_inputs = torch.stack(backward_steps, dim=1)
+
+      all_layers_along_steps.append(torch.cat([last_forward_inputs, last_backward_inputs], dim=-1))
+
+    return torch.stack(all_layers_along_steps, dim=0)
 
 
 class Bengio03ResNetBiLm(torch.nn.Module):
@@ -83,41 +98,39 @@ class Bengio03ResNetBiLm(torch.nn.Module):
     self.config = config
     self.use_cuda = use_cuda
     self.use_position = config['encoder'].get('position', False)
+    self.n_layers = n_layers = config['encoder']['n_layers']
 
     self.dropout = torch.nn.Dropout(self.config['dropout'])
     self.activation = torch.nn.ReLU()
 
-    width = config['encoder']['width']
-    input_size = config['encoder']['projection_dim'] * (width + 1)
-    hidden_size = config['encoder']['projection_dim']
-    num_layers = config['encoder']['n_layers']
+    self.width = width = config['encoder']['width']
+    self.input_size = input_size = config['encoder']['projection_dim'] * (width + 1)
+    self.hidden_size = hidden_size = config['encoder']['projection_dim']
 
-    left_padding = torch.randn(width, hidden_size) / np.sqrt(hidden_size)
-    right_padding = torch.randn(width, hidden_size) / np.sqrt(hidden_size)
-    self.left_padding = torch.nn.Parameter(left_padding, requires_grad=True)
-    self.right_padding = torch.nn.Parameter(right_padding, requires_grad=True)
+    forward_paddings, backward_paddings = [], []
+    forward_projects, backward_projects = [], []
+    for i in range(n_layers):
+      forward_paddings.append(torch.nn.Parameter(torch.randn(width, hidden_size) / np.sqrt(hidden_size)))
+      backward_paddings.append(torch.nn.Parameter(torch.randn(width, hidden_size) / np.sqrt(hidden_size)))
 
-    if self.use_position:
-      self.position = PositionalEncoding(config['encoder']['projection_dim'], self.config['dropout'])
+      forward_projects.append(torch.nn.Linear(input_size, hidden_size))
+      backward_projects.append(torch.nn.Linear(input_size, hidden_size))
 
-    self.left_project = torch.nn.Linear(input_size, hidden_size)
-    self.right_project = torch.nn.Linear(input_size, hidden_size)
+    self.forward_projects = torch.nn.ModuleList(forward_projects)
+    self.backward_projects = torch.nn.ModuleList(backward_projects)
+
+    self.forward_paddings = torch.nn.ParameterList(forward_paddings)
+    self.backward_paddings = torch.nn.ParameterList(backward_paddings)
 
     self.left_linears = torch.nn.ModuleList(
-      [PositionwiseFeedForward(hidden_size, hidden_size, self.config['dropout'])
-       for _ in range(num_layers)])
+      [PositionwiseFeedForward(hidden_size, hidden_size, self.config['dropout']) for _ in range(n_layers)])
     self.right_linears = torch.nn.ModuleList(
-      [PositionwiseFeedForward(hidden_size, hidden_size, self.config['dropout'])
-       for _ in range(num_layers)])
+      [PositionwiseFeedForward(hidden_size, hidden_size, self.config['dropout']) for _ in range(n_layers)])
 
     self.left_blocks = torch.nn.ModuleList(
-      [SublayerConnection(hidden_size, self.config['dropout']) for _ in range(num_layers)])
+      [SublayerConnection(hidden_size, self.config['dropout']) for _ in range(n_layers)])
     self.right_blocks = torch.nn.ModuleList(
-      [SublayerConnection(hidden_size, self.config['dropout']) for _ in range(num_layers)])
-
-    self.input_size = input_size
-    self.num_layers = num_layers
-    self.width = width
+      [SublayerConnection(hidden_size, self.config['dropout']) for _ in range(n_layers)])
 
   def forward(self, inputs):
     """
@@ -126,33 +139,39 @@ class Bengio03ResNetBiLm(torch.nn.Module):
     :return:
     """
     batch_size, sequence_len, dim = inputs.size()
-    if self.use_position:
-      inputs = self.position(inputs)
-    new_inputs = torch.cat([self.left_padding.expand(batch_size, -1, -1),
-                            inputs,
-                            self.right_padding.expand(batch_size, -1, -1)], dim=1)
-
     all_layers_along_steps = []
-    for start in range(sequence_len):
-      end = start + self.width
-      # left_inp: [32 x 8 x 512]
-      left_inp = new_inputs.narrow(1, start, self.width + 1).contiguous().view(batch_size, -1)
-      right_inp = new_inputs.narrow(1, end, self.width + 1).contiguous().view(batch_size, -1)
 
-      # left_out: [32 x 512]
-      left_out = self.dropout(self.activation(self.left_project(left_inp)))
-      right_out = self.dropout(self.activation(self.right_project(right_inp)))
+    last_forward_inputs = inputs
+    last_backward_inputs = inputs
+    for i in range(self.n_layers):
+      if self.use_position:
+        last_forward_inputs = self.position(last_forward_inputs)
+        last_backward_inputs = self.position(last_backward_inputs)
 
-      layers = []
-      for i in range(self.num_layers):
-        # left_out: [32 x 512]
-        left_out = self.left_blocks[i](left_out, self.left_linears[i])
-        right_out = self.right_blocks[i](right_out, self.right_linears[i])
-        # layers[-1]: [32 x 1024]
-        layers.append(torch.cat([left_out, right_out], dim=1))
+      padded_last_forward_inputs = torch.cat([self.forward_paddings[i].expand(batch_size, -1, -1),
+                                              last_forward_inputs,
+                                              self.backward_paddings[i].expand(batch_size, -1, -1)], dim=1)
+      padded_last_backward_inputs = torch.cat([self.forward_paddings[i].expand(batch_size, -1, -1),
+                                               last_backward_inputs,
+                                               self.backward_paddings[i].expand(batch_size, -1, -1)], dim=1)
 
-      # all_layers[-1]: [2 x 32 x 1024]
-      all_layers_along_steps.append(torch.stack(layers, dim=0))
+      forward_steps, backward_steps = [], []
+      for start in range(sequence_len):
+        end = start + self.width
+        forward_input = padded_last_forward_inputs.narrow(1, start, self.width + 1).contiguous().view(batch_size, -1)
+        forward_output = self.activation(self.dropout(self.forward_projects[i](forward_input)))
+        forward_output = self.forward_blocks[i](forward_output, self.forward_linears[i])
 
-    # ret[0]: [2 x 32 x 10 x 1024]
-    return torch.stack(all_layers_along_steps, dim=2)
+        backward_input = padded_last_backward_inputs.narrow(1, end, self.width + 1).contiguous().view(batch_size, -1)
+        backward_output = self.activation(self.dropout(self.backward_projects[i](backward_input)))
+        backward_output = self.backward_blocks[i](backward_output, self.backwarrd_linears[i])
+
+        forward_steps.append(forward_output)
+        backward_steps.append(backward_output)
+
+      last_forward_inputs = torch.stack(forward_steps, dim=1)
+      last_backward_inputs = torch.stack(backward_steps, dim=1)
+
+      all_layers_along_steps.append(torch.cat([last_forward_inputs, last_backward_inputs], dim=-1))
+
+    return torch.stack(all_layers_along_steps, dim=0)

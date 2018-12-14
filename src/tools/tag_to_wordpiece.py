@@ -19,7 +19,7 @@ def main():
     for line in lines:
       tag, token = line.strip().split()
       pieces = tokenizer.tokenize(token)
-      for i, piece in enumerate(range(len(pieces))):
+      for i, piece in enumerate(pieces):
         if i == 0:
           print('{0}\t{1}'.format(tag, piece))
         else:

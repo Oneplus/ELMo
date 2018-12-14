@@ -8,7 +8,7 @@ def get_words(lines):
   start, end, label = None, None, None
   ret = []
   for i, line in enumerate(lines):
-    line = line.strip()
+    line = line.strip().split()[0].lower()
     if line.lower() == '-word-piece-':
       if i == 0:
         # error: starts with -word-piece- tag

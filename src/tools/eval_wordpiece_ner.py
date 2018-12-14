@@ -11,7 +11,7 @@ def get_words(lines):
   start, end, label = None, None, None
   ret = []
   for i, line in enumerate(lines):
-    line = line.strip()
+    line = line.strip().split()[0].lower()
     if line.lower() == '-word-piece-':
       if i == 0:
         # error: starts with -word-piece- tag
@@ -31,7 +31,6 @@ def get_segments(words):
   segs = set()
   start, tag = None, None
   for new_start, new_end, label in words:
-    label = label.lower()
     if label.startswith('b-') or label == 'o':
       if start is not None:
         segs.add((start, new_start - 1, tag))

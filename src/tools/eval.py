@@ -19,4 +19,3 @@ for gold_data, pred_data in zip(gold_dataset, pred_dataset):
         if gold_tag == pred_tag:
             n_correct += 1
 print(n_correct / n_count)
-        

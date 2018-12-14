@@ -38,8 +38,8 @@ for gold_data, pred_data in zip(gold_dataset, pred_dataset):
   for gold_word in gold_words:
     if gold_word in pred_words:
       n_correct += 1
-    n_gold += len(gold_words)
-    n_pred += len(pred_words)
+  n_gold += len(gold_words)
+  n_pred += len(pred_words)
 p = n_correct / n_pred
 r = n_correct / n_gold
 print(2 * p * r / (p + r))

@@ -21,7 +21,7 @@ def get_words(lines):
     else:
       if start is not None:
         ret.append((start, end, label))
-      start, end, tag = i, i, line
+      start, end, label = i, i, line
   if start is not None:
     ret.append((start, end, label))
   return ret

@@ -39,7 +39,7 @@ class PartialCRFLayer(CRFLayer):
           mask[i][j][0] = 0
           mask[i][j][self.uncertain] = 0
 
-    mask = torcn.autograd.Variable(mask)
+    mask = torch.autograd.Variable(mask)
     log_prob = emissions[0] * mask[0] + (1 - mask[0]) * self.ninf
 
     for i in range(1, seq_length):

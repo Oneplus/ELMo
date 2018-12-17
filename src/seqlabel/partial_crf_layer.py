@@ -15,7 +15,7 @@ class PartialCRFLayer(CRFLayer):
 
     if self.training:
       new_y = y.permute(1, 0).contiguous()
-      numerator = self._compute_log_constrained_partition_function(new_emissions, torch.nn.Variable(new_y))
+      numerator = self._compute_log_constrained_partition_function(new_emissions, torch.autograd.Variable(new_y))
       denominator = self._compute_log_partition_function(new_emissions)
       llh = denominator - numerator
       return None, torch.sum(llh)
@@ -39,7 +39,7 @@ class PartialCRFLayer(CRFLayer):
           mask[i][j][0] = 0
           mask[i][j][self.uncertain] = 0
 
-    mask = Variable(mask)
+    mask = torcn.autograd.Variable(mask)
     log_prob = emissions[0] * mask[0] + (1 - mask[0]) * self.ninf
 
     for i in range(1, seq_length):
@@ -67,5 +67,5 @@ class PartialCRFLayer(CRFLayer):
         mask[i][j][0] = 0
         mask[i][j][self.uncertain] = 0
 
-    mask = torch.nn.Variable(mask)
+    mask = torch.autograd.Variable(mask)
     return self._viterbi_decode_with_mask(emissions, mask)

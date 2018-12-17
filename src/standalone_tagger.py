@@ -17,6 +17,7 @@ import torch
 import subprocess
 from modules.gal_lstm import GalLSTM
 from seqlabel.crf_layer import CRFLayer
+from seqlabel.partial_crf_layer import PartialCRFLayer
 logging.basicConfig(level=logging.INFO, format='%(asctime)-15s %(levelname)s: %(message)s')
 
 
@@ -121,7 +122,7 @@ def create_batches(dim, n_layers, raw_data, raw_labels, lexicon, batch_size,
 
 
 class Model(torch.nn.Module):
-  def __init__(self, opt, dim, n_layers, n_class, use_cuda):
+  def __init__(self, opt, dim, n_layers, n_class, consider_word_piece, use_cuda):
     super(Model, self).__init__()
     self.use_cuda = use_cuda
     self.opt = opt
@@ -145,7 +146,10 @@ class Model(torch.nn.Module):
     self.weights = torch.nn.Parameter(weights, requires_grad=True)
 
     # CRF: as suggested by Reimers and Gurevych [2017]
-    self.classify_layer = CRFLayer(encoder_output_dim, n_class, use_cuda)
+    if consider_word_piece:
+      self.classify_layer = CRFLayer(encoder_output_dim, n_class, use_cuda)
+    else:
+      self.classify_layer = PartialCRFLayer(encoder_output_dim, n_class, use_cuda)
     self.train_time = 0
     self.eval_time = 0
     self.emb_time = 0
@@ -297,6 +301,7 @@ def train():
   cmd.add_argument("--lr", type=float, default=0.01, help='the learning rate.')
   cmd.add_argument("--lr_decay", type=float, default=0, help='the learning rate decay.')
   cmd.add_argument("--clip_grad", type=float, default=1, help='the tense of clipped grad.')
+  cmd.add_argument("--consider_word_piece", type=bool, default=False, action='store_true', help='use word piece.')
   cmd.add_argument('--output', help='The path to the output file.')
   cmd.add_argument("--script", required=True, help="The path to the evaluation script")
 
@@ -337,7 +342,10 @@ def train():
     sum([len(seq) for seq in raw_valid_labels]),
     sum([len(seq) for seq in raw_test_labels])))
 
-  label_to_ix = {'<pad>': 0}
+  if not opt.consider_word_piece:
+    label_to_ix = {'<pad>': 0}
+  else:
+    label_to_ix = {'<pad>': 0, '-word-piece-': 1}
   label_to_index(raw_training_labels, label_to_ix)
   label_to_index(raw_valid_labels, label_to_ix, incremental=False)
   label_to_index(raw_test_labels, label_to_ix, incremental=False)
@@ -364,7 +372,7 @@ def train():
   else:
     test_payload = None
 
-  model = Model(opt, dim, n_layers, n_classes, use_cuda)
+  model = Model(opt, dim, n_layers, n_classes, opt.consider_word_piece, use_cuda)
   logging.info(str(model))
   if use_cuda:
     model = model.cuda()

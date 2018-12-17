@@ -18,6 +18,7 @@ import h5py
 from modules.gal_lstm import GalLSTM
 from modules.embedding_layer import EmbeddingLayer
 from seqlabel.crf_layer import CRFLayer
+from seqlabel.partial_crf_layer import PartialCRFLayer
 logging.basicConfig(level=logging.INFO, format='%(asctime)-15s %(levelname)s: %(message)s')
 
 
@@ -131,7 +132,7 @@ def create_batches(dim, n_layers, raw_data, raw_labels, lexicon, word2id, batch_
 
 
 class Model(torch.nn.Module):
-  def __init__(self, opt, word_emb_layer, dim, n_layers, n_class, use_cuda):
+  def __init__(self, opt, word_emb_layer, dim, n_layers, n_class, consider_word_piece, use_cuda):
     super(Model, self).__init__()
     self.use_cuda = use_cuda
     self.opt = opt
@@ -153,7 +154,10 @@ class Model(torch.nn.Module):
     weights = torch.randn(n_layers)
     self.weights = torch.nn.Parameter(weights, requires_grad=True)
 
-    self.classify_layer = CRFLayer(opt.hidden_dim * 2, n_class, self.use_cuda)
+    if not consider_word_piece:
+      self.classify_layer = CRFLayer(opt.hidden_dim * 2, n_class, self.use_cuda)
+    else:
+      self.classify_layer = PartialCRFLayer(opt.hidden_dim * 2, n_class, self.use_cuda)
 
     self.train_time = 0
     self.eval_time = 0
@@ -230,7 +234,7 @@ def train_model(epoch, model, optimizer,
   cnt = 0
   start_time = time.time()
 
-  train_x, train_p, train_y, train_lens = train_payload
+  train_x, train_p, train_y, train_lens, _ = train_payload
 
   lst = list(range(len(train_x)))
   random.shuffle(lst)
@@ -311,6 +315,7 @@ def train():
   cmd.add_argument("--lr", type=float, default=0.01, help='the learning rate.')
   cmd.add_argument("--lr_decay", type=float, default=0, help='the learning rate decay.')
   cmd.add_argument("--clip_grad", type=float, default=1, help='the tense of clipped grad.')
+  cmd.add_argument("--consider_word_piece", default=False, action='store_true', help='use word piece.')
   cmd.add_argument('--output', help='The path to the output file.')
   cmd.add_argument("--script", required=True, help="The path to the evaluation script")
 
@@ -351,7 +356,10 @@ def train():
     sum([len(seq) for seq in raw_valid_labels]),
     sum([len(seq) for seq in raw_test_labels])))
 
-  label_to_ix = {'<pad>': 0}
+  if not opt.consider_word_piece:
+    label_to_ix = {'<pad>': 0}
+  else:
+    label_to_ix = {'<pad>': 0, '-word-piece-': 1}
   label_to_index(raw_training_labels, label_to_ix)
   label_to_index(raw_valid_labels, label_to_ix, incremental=False)
   label_to_index(raw_test_labels, label_to_ix, incremental=False)
@@ -398,7 +406,7 @@ def train():
   else:
     test_payload = None
 
-  model = Model(opt, word_emb_layer, dim, n_layers, n_classes, use_cuda)
+  model = Model(opt, word_emb_layer, dim, n_layers, n_classes, opt.consider_word_piece, use_cuda)
 
   logging.info(str(model))
   if use_cuda:

@@ -146,7 +146,7 @@ class Model(torch.nn.Module):
     self.weights = torch.nn.Parameter(weights, requires_grad=True)
 
     # CRF: as suggested by Reimers and Gurevych [2017]
-    if consider_word_piece:
+    if not consider_word_piece:
       self.classify_layer = CRFLayer(encoder_output_dim, n_class, use_cuda)
     else:
       self.classify_layer = PartialCRFLayer(encoder_output_dim, n_class, use_cuda)
@@ -301,7 +301,7 @@ def train():
   cmd.add_argument("--lr", type=float, default=0.01, help='the learning rate.')
   cmd.add_argument("--lr_decay", type=float, default=0, help='the learning rate decay.')
   cmd.add_argument("--clip_grad", type=float, default=1, help='the tense of clipped grad.')
-  cmd.add_argument("--consider_word_piece", type=bool, default=False, action='store_true', help='use word piece.')
+  cmd.add_argument("--consider_word_piece", default=False, action='store_true', help='use word piece.')
   cmd.add_argument('--output', help='The path to the output file.')
   cmd.add_argument("--script", required=True, help="The path to the evaluation script")
 

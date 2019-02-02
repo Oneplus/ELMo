@@ -58,9 +58,9 @@ def read_conll_corpus(path: str, max_chars: int = None):
                 num, token = fields[0], fields[1]
                 if '-' in num or '.' in num:
                     continue
-                item.append(token)
                 if max_chars is not None and len(token) + 2 > max_chars:
                     token = token[:max_chars - 2]
-                data.append(token)
-            dataset.append(data)
+                item.append(token)
+
+            dataset.append(item)
     return dataset

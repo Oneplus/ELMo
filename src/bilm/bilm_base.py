@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 from typing import Dict
 import torch
+import math
 from .batch import WordBatch, CharacterBatch
 from .token_embedder import ConvTokenEmbedder, LstmTokenEmbedder
 from .lstm import LstmbiLm
@@ -34,11 +35,26 @@ class BiLMBase(torch.nn.Module):
 
         token_embedder_name = c['name'].lower()
         if token_embedder_name == 'cnn':
-            self.token_embedder = ConvTokenEmbedder(conf, word_embedder, char_embedder)
+            self.token_embedder = ConvTokenEmbedder(output_dim=conf['encoder']['projection_dim'],
+                                                    word_embedder=word_embedder,
+                                                    char_embedder=char_embedder,
+                                                    filters=c['filters'],
+                                                    n_highway=c['n_highway'],
+                                                    activation=c['activation'])
         elif token_embedder_name == 'lstm':
-            self.token_embedder = LstmTokenEmbedder(conf, word_embedder, char_embedder)
+            self.token_embedder = LstmTokenEmbedder(output_dim=conf['encoder']['projection_dim'],
+                                                    word_embedder=word_embedder,
+                                                    char_embedder=char_embedder,
+                                                    dropout=conf['dropout'])
         else:
             raise ValueError('Unknown token embedder name: {}'.format(token_embedder_name))
+
+        self.add_sentence_boundary = c['add_sentence_boundary']
+        if self.add_sentence_boundary:
+            dim = self.token_embedder.get_output_dim()
+            scale = 1. / math.sqrt(dim)
+            self.bos_embeddings = torch.nn.Parameter(torch.randn(dim) * scale)
+            self.eos_embeddings = torch.nn.Parameter(torch.randn(dim) * scale)
 
         c = conf['encoder']
         encoder_name = c['name'].lower()
@@ -105,12 +121,39 @@ class BiLMBase(torch.nn.Module):
                 chars_inputs: torch.Tensor,
                 lengths: torch.Tensor,):
 
-        embeded_tokens = self.token_embedder(word_inputs, chars_inputs)
-        embeded_tokens = self.dropout(embeded_tokens)
+        embedded_tokens = self.token_embedder(word_inputs, chars_inputs)
+        embedded_tokens = self.dropout(embedded_tokens)
 
         mask = get_mask_from_sequence_lengths(lengths, lengths.max())
-        encoded_tokens = self.encoder(embeded_tokens, mask)
-        return encoded_tokens, embeded_tokens, mask
+
+        if self.add_sentence_boundary:
+            embedded_tokens_with_boundary, mask_with_boundary = \
+                self._add_sentence_boundary(embedded_tokens, mask)
+            encoded_tokens = self.encoder(embedded_tokens_with_boundary,
+                                          mask_with_boundary)
+            return encoded_tokens[:, :, 1:-1, :], embedded_tokens, mask
+        else:
+            encoded_tokens = self.encoder(embedded_tokens, mask)
+            return encoded_tokens, embedded_tokens, mask
+
+    def _add_sentence_boundary(self, tensor: torch.Tensor,
+                               mask: torch.Tensor):
+        sequence_lengths = mask.sum(dim=1).detach().cpu().numpy()
+        tensor_shape = list(tensor.data.shape)
+        new_shape = list(tensor_shape)
+        new_shape[1] = tensor_shape[1] + 2
+        tensor_with_boundary_embeddings = tensor.new_zeros(*new_shape)
+        new_mask = mask.new_zeros(*new_shape[:-1])
+
+        tensor_with_boundary_embeddings[:, 1:-1, :] = tensor
+        new_mask[:, 1:-1] = mask
+        for i, j in enumerate(sequence_lengths):
+            tensor_with_boundary_embeddings[i, 0, :] = self.bos_embeddings
+            tensor_with_boundary_embeddings[i, j + 1, :] = self.eos_embeddings
+            new_mask[i, 0] = 1
+            new_mask[i, j + 1] = 1
+
+        return tensor_with_boundary_embeddings, new_mask
 
     def forward(self, *input):
         raise NotImplementedError()

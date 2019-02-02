@@ -1,6 +1,6 @@
 from __future__ import absolute_import
 from __future__ import unicode_literals
-from typing import Tuple, Dict
+from typing import Tuple, List
 import torch
 from modules.embeddings import Embeddings
 from allennlp.modules.highway import Highway
@@ -9,17 +9,27 @@ from allennlp.nn.util import get_mask_from_sequence_lengths
 from allennlp.nn.activations import Activation
 
 
-class LstmTokenEmbedder(torch.nn.Module):
-    # Single directional LSTM + self-attention seems to be
-    # a good solution of character encoding.
-    def __init__(self, config: Dict,
+class TokenEmbedderBase(torch.nn.Module):
+    def __init__(self, output_dim: int,
                  word_embedder: Embeddings,
                  char_embedder: Embeddings):
-        super(LstmTokenEmbedder, self).__init__()
-        self.config = config
+        super(TokenEmbedderBase, self).__init__()
+        self.output_dim = output_dim
         self.word_embedder = word_embedder
         self.char_embedder = char_embedder
-        self.output_dim = config['encoder']['projection_dim']
+
+    def get_output_dim(self):
+        return self.output_dim
+
+
+class LstmTokenEmbedder(TokenEmbedderBase):
+    # Single directional LSTM + self-attention seems to be
+    # a good solution of character encoding.
+    def __init__(self, output_dim: int,
+                 word_embedder: Embeddings,
+                 char_embedder: Embeddings,
+                 dropout: float):
+        super(LstmTokenEmbedder, self).__init__(output_dim, word_embedder, char_embedder)
         emb_dim = 0
         if word_embedder is not None:
             emb_dim += word_embedder.n_d
@@ -28,14 +38,14 @@ class LstmTokenEmbedder(torch.nn.Module):
             emb_dim += char_embedder.n_d
             self.char_encoder = torch.nn.LSTM(char_embedder.n_d, char_embedder.n_d, num_layers=1,
                                               bidirectional=False,
-                                              batch_first=True, dropout=config['dropout'])
+                                              batch_first=True, dropout=dropout)
             self.char_attention = MultiHeadSelfAttention(num_heads=1,
                                                          input_dim=char_embedder.n_d,
                                                          attention_dim=char_embedder.n_d,
                                                          values_dim=char_embedder.n_d,
-                                                         attention_dropout_prob=config['dropout'])
+                                                         attention_dropout_prob=dropout)
 
-        self.projection = torch.nn.Linear(emb_dim, self.output_dim, bias=True)
+        self.projection = torch.nn.Linear(emb_dim, output_dim, bias=True)
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -71,26 +81,22 @@ class LstmTokenEmbedder(torch.nn.Module):
         return self.projection(token_embedding)
 
 
-class ConvTokenEmbedder(torch.nn.Module):
-    def __init__(self, config: Dict,
+class ConvTokenEmbedder(TokenEmbedderBase):
+    def __init__(self, output_dim: int,
                  word_embedder: Embeddings,
-                 char_embedder: Embeddings):
-        super(ConvTokenEmbedder, self).__init__()
-        self.config = config
+                 char_embedder: Embeddings,
+                 filters: List[Tuple[int, int]],
+                 n_highway: int,
+                 activation: str):
+        super(ConvTokenEmbedder, self).__init__(output_dim, word_embedder, char_embedder)
 
-        self.word_embedder = word_embedder
-        self.char_embedder = char_embedder
-
-        self.output_dim = config['encoder']['projection_dim']
         self.emb_dim = 0
         if word_embedder is not None:
             self.emb_dim += word_embedder.n_d
 
         if char_embedder is not None:
             self.convolutions = []
-            cnn_config = config['token_embedder']
-            filters = cnn_config['filters']
-            char_embed_dim = cnn_config['char_dim']
+            char_embed_dim = char_embedder.n_d
 
             for i, (width, num) in enumerate(filters):
                 conv = torch.nn.Conv1d(in_channels=char_embed_dim,
@@ -102,10 +108,11 @@ class ConvTokenEmbedder(torch.nn.Module):
             self.convolutions = torch.nn.ModuleList(self.convolutions)
 
             self.n_filters = sum(f[1] for f in filters)
-            self.n_highway = cnn_config['n_highway']
+            self.n_highway = n_highway
 
             self.highways = Highway(self.n_filters, self.n_highway, activation=Activation.by_name("relu")())
             self.emb_dim += self.n_filters
+            self.activation = Activation.by_name(activation)()
 
         self.projection = torch.nn.Linear(self.emb_dim, self.output_dim, bias=True)
 
@@ -126,15 +133,12 @@ class ConvTokenEmbedder(torch.nn.Module):
             embeded_chars = self.char_embedder(char_inputs)
             embeded_chars = torch.transpose(embeded_chars, 1, 2)
 
-            cnn_config = self.config['token_embedder']
-            activation = Activation.by_name(cnn_config['activation'])()
-
             convs = []
             for i in range(len(self.convolutions)):
                 convolved = self.convolutions[i](embeded_chars)
                 # (batch_size * sequence_length, n_filters for this width)
                 convolved, _ = torch.max(convolved, dim=-1)
-                convolved = activation(convolved)
+                convolved = self.activation(convolved)
                 convs.append(convolved)
             char_emb = torch.cat(convs, dim=-1)
             char_emb = self.highways(char_emb)

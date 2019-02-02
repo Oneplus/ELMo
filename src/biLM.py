@@ -15,7 +15,7 @@ import torch
 import shutil
 import numpy as np
 from bilm.bilm_base import BiLMBase
-from bilm.io_util import split_train_and_valid, count_tokens, break_sentences, read_corpus
+from bilm.io_util import split_train_and_valid, count_tokens, read_corpus
 from bilm.io_util import dict2namedtuple
 from bilm.batch import BatcherBase, Batcher, BucketBatcher, WordBatch, CharacterBatch, VocabBatch
 from modules.softmax_loss import SoftmaxLoss
@@ -23,7 +23,6 @@ from modules.window_sampled_softmax_loss import WindowSampledSoftmaxLoss
 from modules.window_sampled_cnn_softmax_loss import WindowSampledCNNSoftmaxLoss
 from allennlp.modules.sampled_softmax_loss import SampledSoftmaxLoss
 from allennlp.training.optimizers import DenseSparseAdam
-from collections import Counter
 
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
                     level=logging.INFO)
@@ -63,12 +62,16 @@ class Model(BiLMBase):
 
         forward, backward = encoded_tokens.split(self.output_dim, 2)
 
-        float_mask = mask.float()
-        forward = forward * float_mask.unsqueeze(-1)
-        backward = backward * float_mask.unsqueeze(-1)
+        byte_mask = mask.byte()
 
-        return self.classify_layer(forward.view(-1, self.output_dim), targets[0].view(-1)), \
-               self.classify_layer(backward.view(-1, self.output_dim), targets[1].view(-1))
+        selected_forward = forward.masked_select(byte_mask.unsqueeze(-1)).view(-1, self.output_dim)
+        selected_backward = backward.masked_select(byte_mask.unsqueeze(-1)).view(-1, self.output_dim)
+
+        selected_forward_targets = targets[0].masked_select(byte_mask)
+        selected_backward_targets = targets[1].masked_select(byte_mask)
+
+        return self.classify_layer(selected_forward, selected_forward_targets), \
+               self.classify_layer(selected_backward, selected_backward_targets)
 
     def save_model(self, path, save_classify_layer):
         torch.save(self.token_embedder.state_dict(), os.path.join(path, 'token_embedder.pkl'))
@@ -83,7 +86,7 @@ class Model(BiLMBase):
 
 
 def eval_model(model: Model,
-               valid_batch: Batcher):
+               valid_batch: BatcherBase):
     model.eval()
     if model.conf['classifier']['name'].lower() in ('window_sampled_cnn_softmax', 'window_sampled_softmax'):
         model.classify_layer.update_embedding_matrix()
@@ -93,6 +96,7 @@ def eval_model(model: Model,
         total_loss += (loss_forward.item() + loss_backward.item()) / 2.
         n_tags = lengths.sum().item()
         total_tag += n_tags
+
     model.train()
     return np.exp(total_loss / total_tag)
 
@@ -127,7 +131,7 @@ def train_model(epoch: int,
             torch.nn.utils.clip_grad_norm_(model.parameters(), conf['optimizer']['clip_grad'])
 
         optimizer.step()
-        if cnt  % opt.report_steps == 0:
+        if cnt % opt.report_steps == 0:
             logger.info("Epoch={} iter={} lr={:.6f} train_ppl={:.4f} time={:.2f}s".format(
                 epoch, cnt, optimizer.param_groups[0]['lr'],
                 np.exp(total_loss / total_tag), time.time() - start_time))
@@ -144,8 +148,10 @@ def train_model(epoch: int,
                     logger.info("New record achieved on training dataset!")
                     model.save_model(opt.model, opt.save_classify_layer)
             else:
+                if train_ppl < best_train:
+                    best_train = train_ppl
                 valid_ppl = eval_model(model, valid_batch)
-                logger.info("Epoch={} iter={} lr={:.6f} valid_ppl={:.6f}".format(
+                logger.info("Epoch={} iter={} lr={:.4f} valid_ppl={:.4f}".format(
                     epoch, cnt, optimizer.param_groups[0]['lr'], valid_ppl))
 
                 if valid_ppl < best_valid:
@@ -155,26 +161,9 @@ def train_model(epoch: int,
 
                     if test is not None:
                         test_result = eval_model(model, test_batch)
-                        logger.info("Epoch={} iter={} lr={:.6f} test_ppl={:.6f}".format(
+                        logger.info("Epoch={} iter={} lr={:.4f} test_ppl={:.4f}".format(
                             epoch, cnt, optimizer.param_groups[0]['lr'], test_result))
     return best_train, best_valid, test_result
-
-
-def get_truncated_vocab(dataset: List[List[str]], min_count: int):
-    word_count = Counter()
-    for sentence in dataset:
-        word_count.update(sentence)
-
-    word_count = list(word_count.items())
-    word_count.sort(key=lambda x: x[1], reverse=True)
-
-    for i, (word, count) in enumerate(word_count):
-        if count < min_count:
-            break
-
-    logger.info('Truncated word count: {0}.'.format(sum([count for word, count in word_count[i:]])))
-    logger.info('Original vocabulary size: {0}.'.format(len(word_count)))
-    return word_count[:i]
 
 
 def train():
@@ -196,7 +185,7 @@ def train():
                      help="whether to save the classify layer")
     cmd.add_argument('--valid_size', type=int, default=0, help="size of validation dataset when there's no valid.")
     cmd.add_argument('--eval_steps', type=int, help='evaluate every xx batches.')
-    cmd.add_argument('--report_steps', type=int, default=1024, help='report every xx batches.')
+    cmd.add_argument('--report_steps', type=int, default=32, help='report every xx batches.')
 
     opt = cmd.parse_args(sys.argv[2:])
 

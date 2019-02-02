@@ -3,7 +3,7 @@ import torch
 from torch.autograd import Variable
 from torch.nn.utils.rnn import pack_padded_sequence, PackedSequence
 
-from modules.util import get_lengths_from_binary_sequence_mask, sort_batch_by_length
+from allennlp.nn.util import get_lengths_from_binary_sequence_mask, sort_batch_by_length
 
 # We have two types here for the state, because storing the state in something
 # which is Iterable (like a tuple, below), is helpful for internal manipulation
@@ -28,6 +28,10 @@ class _EncoderBase(torch.nn.Module):
         super(_EncoderBase, self).__init__()
         self.stateful = stateful
         self._states: Optional[RnnStateStorage] = None
+
+    def forward(self, inputs: torch.Tensor,
+                mask: torch.Tensor):
+        raise NotImplementedError()
 
     def sort_and_run_forward(self,
                              module: Callable[[PackedSequence, Optional[RnnState]],

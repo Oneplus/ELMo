@@ -1,0 +1,31 @@
+{
+    "encoder": {
+        "name": "elmo",
+        "projection_dim": 512, 
+        "cell_clip": 3, 
+        "proj_clip": 3,
+        "dim": 4096,
+        "n_layers": 2
+    },
+
+    "token_embedder": {
+        "name": "cnn",
+        "activation": "relu",
+        "filters": [[1, 32], [2, 32], [3, 64], [4, 128], [5, 256], [6, 512], [7, 1024]],
+        "n_highway": 2, 
+        "word_dim": 0,
+        "char_dim": 50,
+        "max_characters_per_token": 50 		
+    },
+
+    "classifier": {
+        "name": "sampled_softmax",
+        "n_samples": 1024
+    },
+    "optimizer": {
+        "type": "adam",
+        "lr": 1e-3,
+        "clip_grad": 5
+    },
+    "dropout": 0.1
+}

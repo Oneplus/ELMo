@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 from __future__ import print_function
 from __future__ import unicode_literals
+from typing import Dict, List
 import os
 import errno
 import sys
@@ -14,534 +15,515 @@ import tempfile
 import collections
 import torch
 import subprocess
-import h5py
-from modules.gal_lstm import GalLSTM
-from modules.embedding_layer import EmbeddingLayer
+import shutil
+import numpy as np
+from seqlabel.batch import Batcher, TagBatch, LengthBatch, TextBatch, InputBatch
+from seqlabel.elmo import InputLayerBase, ContextualizedWordEmbeddings
+from seqlabel.dummy_inp import DummyInputEncoder
+from seqlabel.project_inp import ProjectedInputEncoder
+from seqlabel.lstm_inp import LSTMInputEncoder, GalLSTMInputEncoder
 from seqlabel.crf_layer import CRFLayer
-from seqlabel.partial_crf_layer import PartialCRFLayer
-logging.basicConfig(level=logging.INFO, format='%(asctime)-15s %(levelname)s: %(message)s')
+from seqlabel.classify_layer import ClassifyLayer
+from modules.embeddings import Embeddings
+from modules.embeddings import load_embedding_txt
+logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
+                    level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
-def dict2namedtuple(dic):
-  return collections.namedtuple('Namespace', dic.keys())(**dic)
+def dict2namedtuple(dic: Dict):
+    return collections.namedtuple('Namespace', dic.keys())(**dic)
 
 
-def read_corpus(path):
-  """
-  read CoNLL format data.
+def read_tag_corpus(path: str):
+    input_dataset_ = []
+    tag_dataset_ = []
 
-  :param path:
-  :return:
-  """
-  dataset = []
-  labels_dataset = []
-  with codecs.open(path, 'r', encoding='utf-8') as fin:
-    for lines in fin.read().strip().split('\n\n'):
-      items, labels = [], []
-      for line in lines.splitlines():
-        label, item = line.split()
-        items.append(item)
-        labels.append(label)
+    n_input_fields = None
+    with codecs.open(path, 'r', encoding='utf-8') as fin:
+        for line in fin:
+            inputs_, tags_ = line.strip().rsplit('|||', 1)
 
-      dataset.append(items)
-      labels_dataset.append(labels)
-  return dataset, labels_dataset
-
-
-def create_one_batch(dim, n_layers, raw_data, raw_labels, lexicon, word2id,
-                     oov='<oov>', pad='<pad>', sort=True, use_cuda=False):
-  batch_size = len(raw_data)
-  lst = list(range(batch_size))
-  if sort:
-    lst.sort(key=lambda l: -len(raw_data[l]))
-
-  sorted_raw_data = [raw_data[i] for i in lst]
-  sorted_raw_labels = [raw_labels[i] for i in lst]
-  sorted_lens = [len(raw_data[i]) for i in lst]
-  max_len = max(sorted_lens)
-
-  oov_id, pad_id = word2id.get(oov, None), word2id.get(pad, None)
-  batch_x = torch.LongTensor(batch_size, max_len).fill_(pad_id)
-  batch_y = torch.LongTensor(batch_size, max_len).fill_(0)
-  batch_p = torch.FloatTensor(batch_size, max_len, n_layers, dim).fill_(0)
-
-  assert oov_id is not None and pad_id is not None
-  for i, raw_items in enumerate(sorted_raw_data):
-    new_raw_items = raw_items
-    sentence_key = '\t'.join(new_raw_items).replace('.', '$period$').replace('/', '$backslash$')
-    batch_p[i][: sorted_lens[i]] = torch.from_numpy(lexicon[sentence_key][()]).transpose(0, 1)
-
-    for j, x_ij in enumerate(raw_items):
-      batch_x[i][j] = word2id.get(x_ij, oov_id)
-      batch_y[i][j] = sorted_raw_labels[i][j]
-
-  if use_cuda:
-    batch_x = batch_x.cuda()
-    batch_p = batch_p.cuda()
-    batch_y = batch_y.cuda()
-
-  return batch_x, batch_p, batch_y, sorted_lens
+            tags_ = tags_.strip().split()
+            input_fields_ = inputs_.split('|||')
+            if n_input_fields is None:
+                n_input_fields = len(input_fields_)
+            input_dataset_.append([input_field_.strip().split() for input_field_ in input_fields_])
+            tag_dataset_.append(tags_)
+    new_input_dataset_ = [[] for _ in range(n_input_fields)]
+    for input_fields_ in input_dataset_:
+        for n, input_field_ in enumerate(input_fields_):
+            new_input_dataset_[n].append(input_field_)
+    return new_input_dataset_, tag_dataset_
 
 
-# shuffle training examples and create mini-batches
-def create_batches(dim, n_layers, raw_data, raw_labels, lexicon, word2id, batch_size,
-                   perm=None, shuffle=True, sort=True, keep_full=False, use_cuda=False):
-  lst = perm or list(range(len(raw_data)))
-  if shuffle:
-    random.shuffle(lst)
+class SeqLabelModel(torch.nn.Module):
+    def __init__(self, conf: Dict,
+                 input_layers: List[InputLayerBase],
+                 n_class: int,
+                 use_cuda: bool):
+        super(SeqLabelModel, self).__init__()
+        self.n_class = n_class
+        self.use_cuda = use_cuda
+        self.dropout = torch.nn.Dropout(p=conf["dropout"])
 
-  if sort:
-    lst.sort(key=lambda l: -len(raw_data[l]))
+        self.input_layers = torch.nn.ModuleList(input_layers)
+        input_dim = 0
+        for input_layer in self.input_layers:
+            # the last one in auxiliary
+            input_dim += input_layer.encoding_dim()
 
-  sorted_raw_data = [raw_data[i] for i in lst]
-  sorted_raw_labels = [raw_labels[i] for i in lst]
+        input_encoder_name = conf['input_encoder']['type'].lower()
+        if input_encoder_name == 'gal_lstm':
+            self.input_encoder = GalLSTMInputEncoder(input_dim,
+                                                     conf['input_encoder']['hidden_dim'],
+                                                     conf['input_encoder']['n_layers'],
+                                                     conf["dropout"])
+            encoded_input_dim = self.input_encoder.encoding_dim()
+        elif input_encoder_name == 'lstm':
+            self.input_encoder = LSTMInputEncoder(input_dim,
+                                                  conf['input_encoder']['hidden_dim'],
+                                                  conf['input_encoder']['n_layers'],
+                                                  conf["dropout"])
+            encoded_input_dim = self.input_encoder.encoding_dim()
+        elif input_encoder_name == 'project':
+            self.input_encoder = ProjectedInputEncoder(input_dim,
+                                                       conf['input_encoder']['hidden_dim'])
+            encoded_input_dim = self.input_encoder.encoding_dim()
+        elif input_encoder_name == 'dummy':
+            self.input_encoder = DummyInputEncoder()
+            encoded_input_dim = input_dim
+        else:
+            raise ValueError('Unknown input encoder: {}'.format(input_encoder_name))
 
-  sum_len = 0.0
-  batches_x, batches_p, batches_y, batches_lens = [], [], [], []
-  size = batch_size
-  n_batch = (len(raw_data) - 1) // size + 1
+        if conf["classifier"]["type"].lower() == 'crf':
+            self.classify_layer = CRFLayer(encoded_input_dim, n_class, use_cuda)
+        else:
+            self.classify_layer = ClassifyLayer(encoded_input_dim, n_class, use_cuda)
 
-  start_id = 0
-  while start_id < len(raw_data):
-    end_id = start_id + size
-    if end_id > len(raw_data):
-      end_id = len(raw_data)
+        self.encode_time = 0
+        self.emb_time = 0
+        self.classify_time = 0
 
-    if keep_full and len(sorted_raw_data[start_id]) != len(sorted_raw_data[end_id - 1]):
-      end_id = start_id + 1
-      while end_id < len(raw_data) and len(sorted_raw_data[end_id]) == len(sorted_raw_data[start_id]):
-        end_id += 1
+    def forward(self, input_: List[torch.Tensor],
+                output_: torch.Tensor):
+        # input_: (batch_size, seq_len)
+        start_time = time.time()
 
-    bx, bp, by, blens = create_one_batch(dim, n_layers,
-                                         sorted_raw_data[start_id: end_id],
-                                         sorted_raw_labels[start_id: end_id],
-                                         lexicon,
-                                         word2id,  sort=sort, use_cuda=use_cuda)
-    sum_len += sum(blens)
-    batches_x.append(bx)
-    batches_p.append(bp)
-    batches_y.append(by)
-    batches_lens.append(blens)
-    start_id = end_id
+        embeddings_ = []
+        for input_layer in self.input_layers:
+            input_field_name = input_layer.input_field_name
+            embeddings_.append(input_layer(input_[input_field_name]))
 
-  logging.info("{} batches, avg len: {:.1f}".format(n_batch, sum_len / len(raw_data)))
-  order = [0] * len(lst)
-  for i, l in enumerate(lst):
-    order[l] = i
-  return batches_x, batches_p, batches_y, batches_lens, order
+        input_ = torch.cat(embeddings_, dim=-1)
+
+        if not self.training:
+            self.emb_time += time.time() - start_time
+
+        # input_: (batch_size, seq_len, input_dim)
+
+        encoded_input_ = self.input_encoder(input_)
+        # encoded_input_: (batch_size, seq_len, dim)
+
+        encoded_input_ = self.dropout(encoded_input_)
+
+        if not self.training:
+            self.encode_time += time.time() - start_time
+
+        start_time = time.time()
+
+        output, loss = self.classify_layer.forward(encoded_input_, output_)
+
+        if not self.training:
+            self.classify_time += time.time() - start_time
+        return output, loss
 
 
-class Model(torch.nn.Module):
-  def __init__(self, opt, word_emb_layer, dim, n_layers, n_class, consider_word_piece, use_cuda):
-    super(Model, self).__init__()
-    self.use_cuda = use_cuda
-    self.opt = opt
-    self.word_emb_layer = word_emb_layer
-    self.dropout = torch.nn.Dropout(p=opt.dropout)
-    self.activation = torch.nn.ReLU()
-
-    if opt.encoder.lower() == 'lstm':
-      self.encoder = torch.nn.LSTM(opt.word_dim + dim, opt.hidden_dim,
-                                   num_layers=opt.depth, bidirectional=True,
-                                   batch_first=True, dropout=opt.dropout)
-    elif opt.encoder.lower() == 'gal_lstm':
-      self.encoder = GalLSTM(opt.word_dim + dim, opt.hidden_dim, num_layers=opt.depth,
-                             bidirectional=True,
-                             wdrop=opt.dropout, idrop=opt.dropout, batch_first=True)
+def eval_model(model: torch.nn.Module,
+               batcher: Batcher,
+               ix2label: Dict[int, str],
+               args,
+               gold_path: str):
+    if args.output is not None:
+        path = args.output
+        fpo = codecs.open(path, 'w', encoding='utf-8')
     else:
-      raise ValueError('Unknown encoder name: {}'.format(opt.encoder.lower()))
+        descriptor, path = tempfile.mkstemp(suffix='.tmp')
+        fpo = codecs.getwriter('utf-8')(os.fdopen(descriptor, 'w'))
 
-    weights = torch.randn(n_layers)
-    self.weights = torch.nn.Parameter(weights, requires_grad=True)
+    model.eval()
+    tagset = []
+    orders = []
+    for input_, output_, order in batcher.get():
+        output, _ = model.forward(input_, output_)
+        for bid in range(len(input_['text'])):
+            tags = []
+            lens = input_['length'][bid]
+            for k in range(lens):
+                tag = ix2label[output[bid][k].item()]
+                tags.append(tag)
+            tagset.append(tags)
+        orders.extend(order)
 
-    if not consider_word_piece:
-      self.classify_layer = CRFLayer(opt.hidden_dim * 2, n_class, self.use_cuda)
-    else:
-      self.classify_layer = PartialCRFLayer(opt.hidden_dim * 2, n_class, self.use_cuda)
+    for order in orders:
+        print(' '.join(['{0}'.format(tag) for tag in tagset[order]]), file=fpo)
+    fpo.close()
 
-    self.train_time = 0
-    self.eval_time = 0
-    self.emb_time = 0
-    self.classify_time = 0
+    model.train()
+    p = subprocess.Popen([args.script, gold_path, path], stdout=subprocess.PIPE)
+    p.wait()
+    f = 0
+    for line in p.stdout.readlines():
+        f = line.strip().split()[-1]
+    # os.remove(path)
+    return float(f)
 
-  def forward(self, x, p, y):
-    p = torch.autograd.Variable(p, requires_grad=False)
-    p = p.transpose(-2, -1).matmul(self.weights)
-    x = self.word_emb_layer(torch.autograd.Variable(x).cuda() if self.use_cuda
-                            else torch.autograd.Variable(x))
 
-    x = torch.cat([x, p], dim=-1)
-    x = self.dropout(x)
+def train_model(epoch: int,
+                opt: argparse.Namespace,
+                model: torch.nn.Module,
+                optimizer: torch.optim.Optimizer,
+                train_batch: Batcher,
+                valid_batch: Batcher,
+                test_batch: Batcher,
+                ix2label: Dict,
+                best_valid: float,
+                test_result: float):
+    model.train()
 
-    output, hidden = self.encoder(x)
+    total_loss, total_tag = 0.0, 0
+    cnt = 0
     start_time = time.time()
 
-    output, loss = self.classify_layer.forward(output, y)
+    for input_, segment_, _ in train_batch.get():
+        cnt += 1
+        model.zero_grad()
+        _, loss = model.forward(input_, segment_)
 
-    if not self.training:
-      self.classify_time += time.time() - start_time
-    if self.training:
-      loss += self.opt.l2 * self.classify_layer.hidden2tag.weight.data.norm(2)
-      # loss += self.opt.l2 * self.merge_inputs.weight.data.norm(2)
-    return output, loss
+        total_loss += loss.item()
+        n_tags = sum(input_['length'])
+        total_tag += n_tags
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), opt.clip_grad)
+        optimizer.step()
 
+        if cnt % opt.report_steps == 0:
+            logger.info("Epoch={} iter={} lr={:.6f} train_ave_loss={:.6f} time={:.2f}s".format(
+                epoch, cnt, optimizer.param_groups[0]['lr'],
+                1.0 * loss.item() / n_tags.float(), time.time() - start_time
+            ))
+            start_time = time.time()
 
-def eval_model(model, valid_payload, ix2label, args, gold_path):
-  if args.output is not None:
-    path = args.output
-    fpo = codecs.open(path, 'w', encoding='utf-8')
-  else:
-    descriptor, path = tempfile.mkstemp(suffix='.tmp')
-    fpo = codecs.getwriter('utf-8')(os.fdopen(descriptor, 'w'))
+        if cnt % opt.eval_steps == 0:
+            valid_result = eval_model(model, valid_batch, ix2label, opt, opt.gold_valid_path)
+            logger.info("Epoch={} iter={} lr={:.6f} train_loss={:.6f} valid_acc={:.6f}".format(
+                epoch, cnt, optimizer.param_groups[0]['lr'], total_loss, valid_result))
 
-  valid_x, valid_p, valid_y, valid_lens, order = valid_payload
+            if valid_result > best_valid:
+                torch.save(model.state_dict(), os.path.join(opt.model, 'model.pkl'))
+                logger.info("New record achieved!")
+                best_valid = valid_result
+                if test is not None:
+                    test_result = eval_model(model, test_batch, ix2label, opt, opt.gold_test_path)
+                    logger.info("Epoch={} iter={} lr={:.6f} test_acc={:.6f}".format(
+                        epoch, cnt, optimizer.param_groups[0]['lr'], test_result))
 
-  model.eval()
-  tagset = []
-  for x, p, y, lens in zip(valid_x, valid_p, valid_y, valid_lens):
-    output, loss = model.forward(x, p, y)
-    output_data = output.data
-    for bid in range(len(x)):
-      tags = []
-      for k in range(lens[bid]):
-        tag = ix2label[int(output_data[bid][k])]
-        tags.append(tag)
-      tagset.append(tags)
-
-  for l in order:
-    for tag in tagset[l]:
-      print(tag, file=fpo)
-    print(file=fpo)
-  fpo.close()
-
-  model.train()
-  p = subprocess.Popen([args.script, gold_path, path], stdout=subprocess.PIPE)
-  p.wait()
-  f = 0
-  for line in p.stdout.readlines():
-    f = line.strip().split()[-1]
-  os.remove(path)
-  return float(f)
-
-
-def train_model(epoch, model, optimizer,
-                train_payload, valid_payload, test_payload,
-                ix2label, best_valid, test_result):
-  model.train()
-  opt = model.opt
-
-  total_loss, total_tag = 0.0, 0
-  cnt = 0
-  start_time = time.time()
-
-  train_x, train_p, train_y, train_lens, _ = train_payload
-
-  lst = list(range(len(train_x)))
-  random.shuffle(lst)
-  train_x = [train_x[l] for l in lst]
-  train_p = [train_p[l] for l in lst]
-  train_y = [train_y[l] for l in lst]
-  train_lens = [train_lens[l] for l in lst]
-
-  for x, p, y, lens in zip(train_x, train_p, train_y, train_lens):
-    cnt += 1
-    model.zero_grad()
-    _, loss = model.forward(x, p, y)
-    total_loss += loss.item()
-    n_tags = sum(lens)
-    total_tag += n_tags
-    loss.backward()
-    torch.nn.utils.clip_grad_norm_(model.parameters(), opt.clip_grad)
-    optimizer.step()
-
-    if cnt * opt.batch_size % 1024 == 0:
-      logging.info("Epoch={} iter={} lr={:.6f} train_ave_loss={:.6f} time={:.2f}s".format(
-        epoch, cnt, optimizer.param_groups[0]['lr'],
-        1.0 * loss.data[0] / n_tags, time.time() - start_time
-      ))
-      start_time = time.time()
-
-    if cnt % opt.eval_steps == 0:
-      valid_result = eval_model(model, valid_payload, ix2label, opt, opt.gold_valid_path)
-      logging.info("Epoch={} iter={} lr={:.6f} train_loss={:.6f} valid_acc={:.6f}".format(
-        epoch, cnt, optimizer.param_groups[0]['lr'], total_loss, valid_result))
-
-      if valid_result > best_valid:
-        torch.save(model.state_dict(), os.path.join(opt.model, 'model.pkl'))
-        logging.info("New record achieved!")
-        best_valid = valid_result
-        if test is not None:
-          test_result = eval_model(model, test_payload, ix2label, opt, opt.gold_test_path)
-          logging.info("Epoch={} iter={} lr={:.6f} test_acc={:.6f}".format(
-            epoch, cnt, optimizer.param_groups[0]['lr'], test_result))
-
-  return best_valid, test_result
-
-
-def label_to_index(y, label_to_ix, incremental=True):
-  for i in range(len(y)):
-    for j in range(len(y[i])):
-      if y[i][j] not in label_to_ix and incremental:
-        label = label_to_ix[y[i][j]] = len(label_to_ix)
-      else:
-        label = label_to_ix.get(y[i][j], 0)
-      y[i][j] = label
+    return best_valid, test_result
 
 
 def train():
-  cmd = argparse.ArgumentParser(sys.argv[0], conflict_handler='resolve')
-  cmd.add_argument('--seed', default=1, type=int, help='the random seed.')
-  cmd.add_argument('--gpu', default=-1, type=int, help='use id of gpu, -1 if cpu.')
-  cmd.add_argument('--encoder', default='gal_lstm', choices=['lstm', 'gal_lstm'],
-                   help='the type of encoder: valid options=[lstm]')
-  cmd.add_argument('--optimizer', default='sgd', choices=['sgd', 'adam'],
-                   help='the type of optimizer: valid options=[sgd, adam]')
-  cmd.add_argument('--train_path', required=True, help='the path to the training file.')
-  cmd.add_argument('--valid_path', required=True, help='the path to the validation file.')
-  cmd.add_argument('--test_path', required=False, help='the path to the testing file.')
-  cmd.add_argument('--lexicon', required=True, help='the path to the hdf5 file.')
-  cmd.add_argument('--gold_valid_path', type=str, help='the path to the validation file.')
-  cmd.add_argument('--gold_test_path', type=str, help='the path to the testing file.')
-  cmd.add_argument("--model", required=True, help="path to save model")
-  cmd.add_argument("--batch_size", "--batch", type=int, default=32, help='the batch size.')
-  cmd.add_argument("--hidden_dim", "--hidden", type=int, default=128, help='the hidden dimension.')
-  cmd.add_argument("--max_epoch", type=int, default=100, help='the maximum number of iteration.')
-  cmd.add_argument("--word_dim", type=int, default=128, help='the input dimension.')
-  cmd.add_argument("--dropout", type=float, default=0.0, help='the dropout rate')
-  cmd.add_argument("--depth", type=int, default=2, help='the depth of lstm')
-  cmd.add_argument("--word_cut", type=int, default=5, help='remove the words that is less frequent than')
-  cmd.add_argument("--eval_steps", type=int, help='eval every x batches')
-  cmd.add_argument("--l2", type=float, default=0.00001, help='the l2 decay rate.')
-  cmd.add_argument("--lr", type=float, default=0.01, help='the learning rate.')
-  cmd.add_argument("--lr_decay", type=float, default=0, help='the learning rate decay.')
-  cmd.add_argument("--clip_grad", type=float, default=1, help='the tense of clipped grad.')
-  cmd.add_argument("--consider_word_piece", default=False, action='store_true', help='use word piece.')
-  cmd.add_argument('--output', help='The path to the output file.')
-  cmd.add_argument("--script", required=True, help="The path to the evaluation script")
+    cmd = argparse.ArgumentParser(sys.argv[0], conflict_handler='resolve')
+    cmd.add_argument('--seed', default=1, type=int, help='the random seed.')
+    cmd.add_argument('--gpu', default=-1, type=int, help='use id of gpu, -1 if cpu.')
+    cmd.add_argument('--config', required=True, help='the config file.')
+    cmd.add_argument('--optimizer', default='sgd', choices=['sgd', 'adam'],
+                     help='the type of optimizer: valid options=[sgd, adam]')
+    cmd.add_argument('--train_path', required=True, help='the path to the training file.')
+    cmd.add_argument('--valid_path', required=True, help='the path to the validation file.')
+    cmd.add_argument('--test_path', required=False, help='the path to the testing file.')
+    cmd.add_argument('--gold_valid_path', type=str, help='the path to the validation file.')
+    cmd.add_argument('--gold_test_path', type=str, help='the path to the testing file.')
+    cmd.add_argument("--model", required=True, help="path to save model")
+    cmd.add_argument("--batch_size", "--batch", type=int, default=32, help='the batch size.')
+    cmd.add_argument("--max_seg_len", default=10, help="the max length of segment.")
+    cmd.add_argument("--max_epoch", type=int, default=100, help='the maximum number of iteration.')
+    cmd.add_argument("--report_steps", type=int, default=1024, help='eval every x batches')
+    cmd.add_argument("--eval_steps", type=int, help='eval every x batches')
+    cmd.add_argument("--lr", type=float, default=0.01, help='the learning rate.')
+    cmd.add_argument("--lr_decay", type=float, default=0, help='the learning rate decay.')
+    cmd.add_argument("--clip_grad", type=float, default=1, help='the tense of clipped grad.')
+    cmd.add_argument('--output', help='The path to the output file.')
+    cmd.add_argument("--script", required=True, help="The path to the evaluation script")
 
-  opt = cmd.parse_args(sys.argv[2:])
+    opt = cmd.parse_args(sys.argv[2:])
+    print(opt)
 
-  print(opt)
-  torch.manual_seed(opt.seed)
-  random.seed(opt.seed)
-  if opt.gpu >= 0:
-    torch.cuda.set_device(opt.gpu)
-    if opt.seed > 0:
-      torch.cuda.manual_seed(opt.seed)
+    # setup random
+    torch.manual_seed(opt.seed)
+    random.seed(opt.seed)
+    if opt.gpu >= 0:
+        torch.cuda.set_device(opt.gpu)
+        if opt.seed > 0:
+            torch.cuda.manual_seed(opt.seed)
 
-  if opt.gold_valid_path is None:
-    opt.gold_valid_path = opt.valid_path
+    conf = json.load(open(opt.config, 'r'))
+    if opt.gold_valid_path is None:
+        opt.gold_valid_path = opt.valid_path
 
-  if opt.gold_test_path is None and opt.test_path is not None:
-    opt.gold_test_path = opt.test_path
+    if opt.gold_test_path is None and opt.test_path is not None:
+        opt.gold_test_path = opt.test_path
 
-  use_cuda = opt.gpu >= 0 and torch.cuda.is_available()
+    use_cuda = opt.gpu >= 0 and torch.cuda.is_available()
 
-  lexicon = h5py.File(opt.lexicon, 'r')
-  dim, n_layers = lexicon['#info'][0].item(), lexicon['#info'][1].item()
-  logging.info('dim: {}'.format(dim))
-  logging.info('n_layers: {}'.format(n_layers))
+    # load raw data
+    raw_training_input_data_, raw_training_output_data_ = read_tag_corpus(opt.train_path)
+    raw_valid_input_data_, raw_valid_output_data_ = read_tag_corpus(opt.valid_path)
+    if opt.test_path is not None:
+        raw_test_input_data_, raw_test_output_data_ = read_tag_corpus(opt.test_path)
+    else:
+        raw_test_input_data_, raw_test_output_data_ = [], []
 
-  raw_training_data, raw_training_labels = read_corpus(opt.train_path)
-  raw_valid_data, raw_valid_labels = read_corpus(opt.valid_path)
-  if opt.test_path is not None:
-    raw_test_data, raw_test_labels = read_corpus(opt.test_path)
-  else:
-    raw_test_data, raw_test_labels = [], []
+    logger.info('we have {0} fields'.format(len(raw_training_input_data_)))
+    logger.info('training instance: {}, validation instance: {}, test instance: {}.'.format(
+        len(raw_training_input_data_[0]), len(raw_valid_input_data_[0]), len(raw_test_input_data_[0])))
+    logger.info('training tokens: {}, validation tokens: {}, test tokens: {}.'.format(
+        sum([len(seq) for seq in raw_training_input_data_[0]]),
+        sum([len(seq) for seq in raw_valid_input_data_[0]]),
+        sum([len(seq) for seq in raw_test_input_data_[0]])))
 
-  logging.info('training instance: {}, validation instance: {}, test instance: {}.'.format(
-    len(raw_training_labels), len(raw_valid_labels), len(raw_test_labels)))
-  logging.info('training tokens: {}, validation tokens: {}, test tokens: {}.'.format(
-    sum([len(seq) for seq in raw_training_labels]),
-    sum([len(seq) for seq in raw_valid_labels]),
-    sum([len(seq) for seq in raw_test_labels])))
+    # create batcher
+    input_batchers = {}
+    for c in conf['input']:
+        if c['type'] == 'embeddings':
+            batcher = InputBatch(c['name'], c['field'], c['min_cut'],
+                                 c.get('oov', '<oov>'), c.get('pad', '<pad>'), not c.get('cased', True), use_cuda)
+            if c['fixed']:
+                if 'pretrained' in c:
+                    batcher.create_dict_from_file(c['pretrained'])
+                else:
+                    logger.warning('it is un-reasonable to use fix embedding without pretraining.')
+            else:
+                batcher.create_dict_from_dataset(raw_training_input_data_[c['field']])
+            input_batchers[c['name']] = batcher
 
-  if not opt.consider_word_piece:
-    label_to_ix = {'<pad>': 0}
-  else:
-    label_to_ix = {'<pad>': 0, '-word-piece-': 1}
-  label_to_index(raw_training_labels, label_to_ix)
-  label_to_index(raw_valid_labels, label_to_ix, incremental=False)
-  label_to_index(raw_test_labels, label_to_ix, incremental=False)
+    # till now, lexicon is fixed, but embeddings was not
+    # keep the order of [textbatcher, lengthbatcher]
+    input_batchers['text'] = TextBatch(use_cuda)
+    input_batchers['length'] = LengthBatch(use_cuda)
 
-  logging.info('number of tags: {0}'.format(len(label_to_ix)))
+    output_batcher = TagBatch(use_cuda)
+    output_batcher.create_dict_from_dataset(raw_training_output_data_)
+    logger.info('tags: {0}'.format(output_batcher.mapping))
 
-  word_count = collections.Counter()
-  for x in raw_training_data:
-    for w in x:
-      word_count[w] += 1
+    input_layers = []
+    for i, c in enumerate(conf['input']):
+        if c['type'] == 'embeddings':
+            if 'pretrained' in c:
+                embs = load_embedding_txt(c['pretrained'], c['has_header'])
+                logger.info('loaded {0} embedding entries.'.format(len(embs[0])))
+            else:
+                embs = None
+            name = c['name']
+            mapping = input_batchers[name].mapping
+            layer = Embeddings(name, c['dim'], mapping, fix_emb=c['fixed'],
+                               embs=embs, normalize=c.get('normalize', False))
+            logger.info('embedding layer for field {0} '
+                        'created with {1} x {2}.'.format(c['field'], layer.n_V, layer.n_d))
+            input_layers.append(layer)
+        elif c['type'] == 'elmo':
+            name = c['name']
+            layer = ContextualizedWordEmbeddings(name, c['path'], use_cuda)
+            input_layers.append(layer)
+        else:
+            raise ValueError('{} unknown input layer'.format(c['type']))
 
-  word_lexicon = {}
-  for w in word_count:
-    if word_count[w] >= opt.word_cut:
-      word_lexicon[w] = len(word_lexicon)
+    n_tags = output_batcher.n_tags
+    id2label = {ix: label for label, ix in output_batcher.mapping.items()}
 
-  for special_word in ['<oov>', '<pad>']:
-    if special_word not in word_lexicon:
-      word_lexicon[special_word] = len(word_lexicon)
-  logging.info('training vocab size: {}'.format(len(word_lexicon)))
+    training_batcher = Batcher(n_tags, raw_training_input_data_,
+                               raw_training_output_data_,
+                               input_batchers, output_batcher, opt.batch_size, use_cuda=use_cuda)
 
-  word_emb_layer = EmbeddingLayer(opt.word_dim, word_lexicon, fix_emb=False, embs=None)
-  logging.info('Word embedding size: {0}'.format(len(word_emb_layer.word2id)))
+    if opt.eval_steps is None or opt.eval_steps > len(raw_training_input_data_):
+        opt.eval_steps = training_batcher.num_batches()
 
-  n_classes = len(label_to_ix)
-  ix2label = {ix: label for label, ix in label_to_ix.items()}
+    valid_batcher = Batcher(n_tags, raw_valid_input_data_, raw_valid_output_data_,
+                            input_batchers, output_batcher, opt.batch_size,
+                            shuffle=False, sorting=True, keep_full=True,
+                            use_cuda=use_cuda)
 
-  word2id = word_emb_layer.word2id
+    if opt.test_path is not None:
+        test_batcher = Batcher(n_tags, raw_test_input_data_, raw_test_output_data_,
+                               input_batchers, output_batcher,
+                               opt.batch_size,
+                               shuffle=False, sorting=True, keep_full=True,
+                               use_cuda=use_cuda)
+    else:
+        test_batcher = None
 
-  training_payload = create_batches(dim, n_layers, raw_training_data, raw_training_labels,
-                                    lexicon, word2id, opt.batch_size, use_cuda=use_cuda)
+    model = SeqLabelModel(conf, input_layers, n_tags, use_cuda)
 
-  if opt.eval_steps is None or opt.eval_steps > len(raw_training_data):
-    opt.eval_steps = len(training_payload[0])
+    logger.info(str(model))
+    if use_cuda:
+        model = model.cuda()
 
-  valid_payload = create_batches(dim, n_layers, raw_valid_data, raw_valid_labels,
-                                 lexicon, word2id, opt.batch_size, shuffle=False, sort=True, keep_full=True,
-                                 use_cuda=use_cuda)
+    need_grad = lambda x: x.requires_grad
+    if opt.optimizer.lower() == 'adam':
+        optimizer = torch.optim.Adam(filter(need_grad, model.parameters()), lr=opt.lr)
+    else:
+        optimizer = torch.optim.SGD(filter(need_grad, model.parameters()), lr=opt.lr)
 
-  if opt.test_path is not None:
-    test_payload = create_batches(dim, n_layers, raw_test_data, raw_test_labels,
-                                  lexicon, word2id, opt.batch_size, shuffle=False, sort=True, keep_full=True,
-                                  use_cuda=use_cuda)
-  else:
-    test_payload = None
+    try:
+        os.makedirs(opt.model)
+    except OSError as exception:
+        if exception.errno != errno.EEXIST:
+            raise
 
-  model = Model(opt, word_emb_layer, dim, n_layers, n_classes, opt.consider_word_piece, use_cuda)
+    for name_, input_batcher in input_batchers.items():
+        if name_ == 'text' or name_ == 'length':
+            continue
+        with codecs.open(os.path.join(opt.model, '{0}.dic'.format(input_batcher.name)), 'w',
+                         encoding='utf-8') as fpo:
+            for w, i in input_batcher.mapping.items():
+                print('{0}\t{1}'.format(w, i), file=fpo)
 
-  logging.info(str(model))
-  if use_cuda:
-    model = model.cuda()
+    with codecs.open(os.path.join(opt.model, 'label.dic'), 'w', encoding='utf-8') as fpo:
+        for label, i in output_batcher.mapping.items():
+            print('{0}\t{1}'.format(label, i), file=fpo)
 
-  need_grad = lambda x: x.requires_grad
-  if opt.optimizer.lower() == 'adam':
-    optimizer = torch.optim.Adam(filter(need_grad, model.parameters()), lr=opt.lr)
-  else:
-    optimizer = torch.optim.SGD(filter(need_grad, model.parameters()), lr=opt.lr)
+    new_config_path = os.path.join(opt.model, os.path.basename(opt.config))
+    shutil.copy(opt.config, new_config_path)
+    opt.config = new_config_path
+    json.dump(vars(opt), codecs.open(os.path.join(opt.model, 'config.json'), 'w', encoding='utf-8'))
 
-  try:
-    os.makedirs(opt.model)
-  except OSError as exception:
-    if exception.errno != errno.EEXIST:
-      raise
+    best_valid, test_result = -1e8, -1e8
+    for epoch in range(opt.max_epoch):
+        best_valid, test_result = train_model(epoch, opt, model, optimizer,
+                                              training_batcher, valid_batcher, test_batcher,
+                                              id2label, best_valid, test_result)
+        if opt.lr_decay > 0:
+            optimizer.param_groups[0]['lr'] *= opt.lr_decay
+        logger.info('Total encoder time: {:.2f}s'.format(model.encode_time / (epoch + 1)))
+        logger.info('Total embedding time: {:.2f}s'.format(model.emb_time / (epoch + 1)))
+        logger.info('Total classify time: {:.2f}s'.format(model.classify_time / (epoch + 1)))
 
-  with codecs.open(os.path.join(opt.model, 'word.dic'), 'w', encoding='utf-8') as fpo:
-    for w, i in word_emb_layer.word2id.items():
-      print('{0}\t{1}'.format(w, i), file=fpo)
-
-  with codecs.open(os.path.join(opt.model, 'label.dic'), 'w', encoding='utf-8') as fpo:
-    for label, i in label_to_ix.items():
-      print('{0}\t{1}'.format(label, i), file=fpo)
-
-  json.dump(vars(opt), codecs.open(os.path.join(opt.model, 'config.json'), 'w', encoding='utf-8'))
-  best_valid, test_result = -1e8, -1e8
-  for epoch in range(opt.max_epoch):
-    best_valid, test_result = train_model(epoch, model, optimizer,
-                                          training_payload, valid_payload, test_payload,
-                                          ix2label, best_valid, test_result)
-    if opt.lr_decay > 0:
-      optimizer.param_groups[0]['lr'] *= opt.lr_decay
-    logging.info('Total encoder time: {:.2f}s'.format(model.eval_time / (epoch + 1)))
-    logging.info('Total embedding time: {:.2f}s'.format(model.emb_time / (epoch + 1)))
-    logging.info('Total classify time: {:.2f}s'.format(model.classify_time / (epoch + 1)))
-
-  weights = model.weights
-  if use_cuda:
-    weights = weights.cpu()
-  logging.info("weights: {}".format(weights.data.numpy()))
-  logging.info("best_valid_acc: {:.6f}".format(best_valid))
-  logging.info("test_acc: {:.6f}".format(test_result))
+    logger.info("best_valid_acc: {:.6f}".format(best_valid))
+    logger.info("test_acc: {:.6f}".format(test_result))
 
 
 def test():
-  cmd = argparse.ArgumentParser('The testing components of')
-  cmd.add_argument('--gpu', default=-1, type=int, help='use id of gpu, -1 if cpu.')
-  cmd.add_argument("--input", help="the path to the test file.")
-  cmd.add_argument('--output', help='the path to the output file.')
-  cmd.add_argument("--models", required=True, help="path to save model")
-  cmd.add_argument("--lexicon", required=True, help='path to the lexicon (hdf5) file.')
+    cmd = argparse.ArgumentParser('The testing components of')
+    cmd.add_argument('--gpu', default=-1, type=int, help='use id of gpu, -1 if cpu.')
+    cmd.add_argument("--input", help="the path to the test file.")
+    cmd.add_argument('--output', help='the path to the output file.')
+    cmd.add_argument("--model", required=True, help="path to save model")
 
-  args = cmd.parse_args(sys.argv[2:])
+    args = cmd.parse_args(sys.argv[2:])
+    use_cuda = args.gpu >= 0 and torch.cuda.is_available()
 
-  if args.gpu >= 0:
-    torch.cuda.set_device(args.gpu)
+    model_path = args.model
 
-  lexicon = h5py.File(args.lexicon, 'r')
-  dim, n_layers = lexicon['#info'][0].item(), lexicon['#info'][1].item()
-  logging.info('dim: {}'.format(dim))
-  logging.info('n_layers: {}'.format(n_layers))
+    model_cmd_opt = dict2namedtuple(json.load(codecs.open(os.path.join(model_path, 'config.json'), 'r', encoding='utf-8')))
+    conf = json.load(open(model_cmd_opt.config, 'r'))
 
-  model_path = args.model
+    torch.manual_seed(model_cmd_opt.seed)
+    random.seed(model_cmd_opt.seed)
+    if args.gpu >= 0:
+        torch.cuda.set_device(args.gpu)
+        torch.cuda.manual_seed(model_cmd_opt.seed)
+        use_cuda = True
 
-  args2 = dict2namedtuple(json.load(codecs.open(os.path.join(model_path, 'config.json'), 'r', encoding='utf-8')))
+    input_batchers = {}
+    input_layers = []
+    for c in conf['input']:
+        if c['type'] == 'embeddings':
+            name = c['name']
+            batcher = InputBatch(c['name'], c['field'], c['min_cut'],
+                                 c.get('oov', '<oov>'), c.get('pad', '<pad>'), not c.get('cased', True), use_cuda)
+            with open(os.path.join(model_path, '{0}.dic'.format(c['name'])), 'r') as fpi:
+                mapping = batcher.mapping
+                for line in fpi:
+                    token, i = line.strip().split('\t')
+                    mapping[token] = int(i)
+            layer = Embeddings(name, c['dim'], batcher.mapping, fix_emb=c['fixed'],
+                               embs=None, normalize=c.get('normalize', False))
+            logger.info('embedding layer for field {0} '
+                        'created with {1} x {2}.'.format(c['field'], layer.n_V, layer.n_d))
+            input_batchers[name] = batcher
+        elif c['type'] == 'elmo':
+            name = c['name']
+            layer = ContextualizedWordEmbeddings(name, c['path'], use_cuda)
+        else:
+            raise ValueError('Unsupported input type')
+        input_layers.append(layer)
 
-  word_lexicon = {}
-  word_emb_layers = []
-  with codecs.open(os.path.join(model_path, 'word.dic'), 'r', encoding='utf-8') as fpi:
-    for line in fpi:
-      tokens = line.strip().split('\t')
-      if len(tokens) == 1:
-        tokens.insert(0, '\u3000')
-      token, i = tokens
-      word_lexicon[token] = int(i)
+    input_batchers['text'] = TextBatch(use_cuda)
+    input_batchers['length'] = LengthBatch(use_cuda)
 
-  word_emb_layer = EmbeddingLayer(args2.word_dim, word_lexicon, fix_emb=False, embs=None)
+    output_batcher = TagBatch(use_cuda)
+    id2label = {}
+    with codecs.open(os.path.join(model_path, 'label.dic'), 'r', encoding='utf-8') as fpi:
+        for line in fpi:
+            token, i = line.strip().split('\t')
+            output_batcher.mapping[token] = int(i)
+            id2label[int(i)] = token
+    logger.info('labels: {0}'.format(output_batcher.mapping))
 
-  logging.info('word embedding size: ' + str(len(word_emb_layers[0].word2id)))
+    n_tags = len(id2label)
+    model = SeqLabelModel(conf, input_layers, n_tags, use_cuda)
 
-  label2id, id2label = {}, {}
-  with codecs.open(os.path.join(model_path, 'label.dic'), 'r', encoding='utf-8') as fpi:
-    for line in fpi:
-      token, i = line.strip().split('\t')
-      label2id[token] = int(i)
-      id2label[int(i)] = token
-  logging.info('number of labels: {0}'.format(len(label2id)))
+    model.load_state_dict(torch.load(os.path.join(model_path, 'model.pkl'), map_location=lambda storage, loc: storage))
+    if use_cuda:
+        model = model.cuda()
 
-  use_cuda = args.gpu >= 0 and torch.cuda.is_available()
+    model_parameters = filter(lambda p: p.requires_grad, model.parameters())
+    params = sum([np.prod(p.size()) for p in model_parameters])
+    logger.info('# of params: {0}'.format(params))
 
-  model = Model(args2, word_emb_layer, dim, n_layers, len(label2id), use_cuda)
-  model.load_state_dict(torch.load(os.path.join(path, 'model.pkl'), map_location=lambda storage, loc: storage))
-  if use_cuda:
-    model = model.cuda()
+    raw_test_input_data_, raw_test_segment_data_ = read_tag_corpus(args.input)
 
-  raw_test_data, raw_test_labels = read_corpus(args.input)
-  label_to_index(raw_test_labels, label2id, incremental=False)
+    batcher = Batcher(n_tags, raw_test_input_data_, raw_test_segment_data_,
+                      input_batchers, output_batcher,
+                      model_cmd_opt.batch_size,
+                      shuffle=False, sorting=True, keep_full=True,
+                      use_cuda=use_cuda)
 
-  test_data, test_embed, test_labels, test_lens, order = create_batches(dim, n_layers,
-                                                                        raw_test_data, raw_test_labels, lexicon,
-                                                                        word_lexicon,
-                                                                        args2.batch_size, shuffle=False, sort=True,
-                                                                        keep_full=True,
-                                                                        use_cuda=use_cuda)
+    if args.output is not None:
+        fpo = codecs.open(args.output, 'w', encoding='utf-8')
+    else:
+        fpo = codecs.getwriter('utf-8')(sys.stdout)
 
-  if args.output is not None:
-    fpo = codecs.open(args.output, 'w', encoding='utf-8')
-  else:
-    fpo = codecs.getwriter('utf-8')(sys.stdout)
+    model.eval()
+    tagset = []
+    orders = []
+    cnt = 0
+    for input_, output_, order in batcher.get():
+        cnt += 1
+        output, _ = model.forward(input_, output_)
+        for bid in range(len(input_['text'])):
+            tags = []
+            lens = input_['length'][bid]
+            for k in range(lens):
+                tag = id2label[output[bid][k].item()]
+                tags.append(tag)
+            tagset.append(tags)
+        if cnt % model_cmd_opt.report_steps == 0:
+            logger.info('finished {0} x {1} batches'.format(cnt, model_cmd_opt.batch_size))
+        orders.extend(order)
 
-  model.eval()
-  tagset = []
-  for x, p, y, lens in zip(test_data, test_embed, test_labels, test_lens):
-    output, loss = model.forward(x, p, y)
-    output_data = output.data
-    for bid in range(len(x)):
-      tags = []
-      for k in range(lens[bid]):
-        tag = id2label[int(output_data[bid][k])]
-        tags.append(tag)
-      tagset.append(tags)
+    for order in orders:
+        print(' '.join(['{0}'.format(tag) for tag in tagset[order]]), file=fpo)
+    fpo.close()
 
-  for l in order:
-    for tag in tagset[l]:
-      print(tag, file=fpo)
-    print(file=fpo)
-
-  fpo.close()
+    logger.info('Total encoder time: {:.2f}s'.format(model.encode_time))
+    logger.info('Total embedding time: {:.2f}s'.format(model.emb_time))
+    logger.info('Total classify time: {:.2f}s'.format(model.classify_time))
 
 
 if __name__ == "__main__":
-  if len(sys.argv) > 1 and sys.argv[1] == 'train':
-    train()
-  elif len(sys.argv) > 1 and sys.argv[1] == 'test':
-    test()
-  else:
-    print('Usage: {0} [train|test] [options]'.format(sys.argv[0]), file=sys.stderr)
+    if len(sys.argv) > 1 and sys.argv[1] == 'train':
+        train()
+    elif len(sys.argv) > 1 and sys.argv[1] == 'test':
+        test()
+    else:
+        print('Usage: {0} [train|test] [options]'.format(sys.argv[0]), file=sys.stderr)

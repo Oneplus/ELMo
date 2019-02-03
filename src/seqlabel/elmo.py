@@ -42,7 +42,7 @@ class ContextualizedWordEmbeddings(InputLayerBase):
         # output_: (batch_size, seq_len, max_seg_len, dim)
         return encoding_
 
-    def encoding_dim(self):
+    def get_output_dim(self):
         return self.dim
 
 
@@ -57,7 +57,7 @@ if __name__ == "__main__":
 
     encoder = ContextualizedWordEmbeddings(sys.argv[1], False)
     print(encoder)
-    print(encoder.encoding_dim())
+    print(encoder.get_output_dim())
 
     input_ = [
         ['EU', 'rejects', 'German', 'call', 'to', 'boycott', 'British', 'lamb', '.'],

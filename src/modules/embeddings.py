@@ -2,12 +2,13 @@ import torch
 import logging
 import codecs
 import numpy as np
-
+import gzip
 logging.basicConfig(level=logging.INFO, format='%(asctime)-15s %(levelname)s: %(message)s')
 
 
 class Embeddings(torch.nn.Module):
-    def __init__(self, n_d, word2id, embs=None, fix_emb=True, oov='<oov>', pad='<pad>', normalize=True):
+    def __init__(self, n_d, word2id, embs=None, fix_emb=True, oov='<oov>', pad='<pad>', normalize=True,
+                 input_field_name=None):
         super(Embeddings, self).__init__()
         if embs is not None:
             embwords, embvecs = embs
@@ -21,6 +22,7 @@ class Embeddings(torch.nn.Module):
                     n_d, len(embvecs[0]), len(embvecs[0])))
                 n_d = len(embvecs[0])
 
+        self.input_field_name = input_field_name
         self.word2id = word2id
         self.id2word = {i: word for word, i in word2id.items()}
         self.n_V, self.n_d = len(word2id), n_d
@@ -48,13 +50,16 @@ class Embeddings(torch.nn.Module):
     def forward(self, input_):
         return self.embedding(input_)
 
+    def get_output_dim(self):
+        return self.n_d
+
 
 def load_embedding_npz(path: str):
     data = np.load(path)
     return [str(w) for w in data['words']], data['vals']
 
 
-def load_embedding_txt(path: str):
+def load_embedding_txt(path: str, has_header: bool):
     words, vals = [], []
     if path.endswith('.gz'):
         fin = gzip.open(path, 'rb')
@@ -72,8 +77,8 @@ def load_embedding_txt(path: str):
     return words, np.asarray(vals).reshape(len(words), -1)  # reshape
 
 
-def load_embedding(path: str):
+def load_embedding(path: str, has_header: bool):
     if path.endswith(".npz"):
         return load_embedding_npz(path)
     else:
-        return load_embedding_txt(path)
+        return load_embedding_txt(path, has_header)

@@ -28,7 +28,7 @@ def break_sentences(sentences: List[List[str]], max_sent_len: int) -> List[List[
 
 
 def read_corpus(path: str, max_sent_len: int = 20, max_chars: int = None):
-    data = []
+    dataset = []
     with codecs.open(path, 'r', encoding='utf-8') as fin:
         for line in fin:
             item = []
@@ -36,9 +36,26 @@ def read_corpus(path: str, max_sent_len: int = 20, max_chars: int = None):
                 if max_chars is not None and len(token) + 2 > max_chars:
                     token = token[:max_chars - 2]
                 item.append(token)
-            data.append(item)
-    dataset = break_sentences(data, max_sent_len)
+            dataset.append(item)
+    dataset = break_sentences(dataset, max_sent_len)
     return dataset
+
+
+def read_corpus_with_original_text(path: str, max_sent_len: int = 20, max_chars: int = None):
+    dataset, raw_dataset = [], []
+    with codecs.open(path, 'r', encoding='utf-8') as fin:
+        for line in fin:
+            item, raw_item = [], []
+            for token in line.strip().split():
+                new_token = token
+                if max_chars is not None and len(new_token) + 2 > max_chars:
+                    new_token = new_token[:max_chars - 2]
+                item.append(new_token)
+                raw_item.append(token)
+            dataset.append(item)
+            raw_dataset.append(raw_item)
+    dataset = break_sentences(dataset, max_sent_len)
+    return dataset, raw_dataset
 
 
 def dict2namedtuple(dic: Dict):
@@ -64,3 +81,26 @@ def read_conll_corpus(path: str, max_chars: int = None):
 
             dataset.append(item)
     return dataset
+
+
+def read_conll_corpus_with_original_text(path: str, max_chars: int = None):
+    # read text in CoNLL-U format.
+    dataset, raw_dataset = [], []
+    with codecs.open(path, 'r', encoding='utf-8') as fin:
+        for payload in fin.read().strip().split('\n\n'):
+            item, raw_item = [], []
+            lines = payload.splitlines()
+            body = [line for line in lines if not line.startswith('#')]
+            for line in body:
+                fields = line.split('\t')
+                num, token = fields[0], fields[1]
+                if '-' in num or '.' in num:
+                    continue
+                if max_chars is not None and len(token) + 2 > max_chars:
+                    token = token[:max_chars - 2]
+                item.append(token)
+                raw_item.append(fields[1])
+
+            dataset.append(item)
+            raw_dataset.append(raw_item)
+    return dataset, raw_dataset

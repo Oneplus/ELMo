@@ -183,10 +183,12 @@ class BatcherBase(object):
     def __init__(self, raw_dataset: List[List[str]],
                  word_batch: Union[WordBatch, None],
                  char_batch: Union[CharacterBatch, None],
-                 vocab_batch: VocabBatch,
+                 vocab_batch: Union[VocabBatch, None],
                  batch_size: int,
-                 use_cuda: bool):
+                 use_cuda: bool,
+                 original_dataset: List[List[str]] = None):
         self.raw_dataset = raw_dataset
+        self.original_dataset = original_dataset
         self.word_batch = word_batch
         self.char_batch = char_batch
         self.vocab_batch = vocab_batch
@@ -217,7 +219,11 @@ class BatcherBase(object):
                 char_inputs = None
 
             lengths = self.length_batch.create_one_batch(data_in_one_batch)
-            text = self.text_batch.create_one_batch(data_in_one_batch)
+            if self.original_dataset:
+                original_data_in_one_batch = [self.raw_dataset[i] for i in one_batch_indices]
+                text = self.text_batch.create_one_batch(original_data_in_one_batch)
+            else:
+                text = self.text_batch.create_one_batch(data_in_one_batch)
             if self.vocab_batch:
                 vocab = self.vocab_batch.create_one_batch(data_in_one_batch)
             else:
@@ -236,14 +242,15 @@ class Batcher(BatcherBase):
     def __init__(self, raw_dataset: List[List[str]],
                  word_batch: Union[WordBatch, None],
                  char_batch: Union[CharacterBatch, None],
-                 vocab_batch: VocabBatch,
+                 vocab_batch: Union[VocabBatch, None],
                  batch_size: int,
                  shuffle: bool = True,
                  sorting: bool = True,
                  keep_full: bool = False,
-                 use_cuda: bool = False):
+                 use_cuda: bool = False,
+                 original_raw_dataset: List[List[str]] = None):
         super(Batcher, self).__init__(raw_dataset, word_batch, char_batch, vocab_batch,
-                                      batch_size, use_cuda)
+                                      batch_size, use_cuda, original_raw_dataset)
         self.shuffle = shuffle
         self.sorting = sorting
         self.keep_full = keep_full
@@ -287,7 +294,7 @@ class BucketBatcher(BatcherBase):
     def __init__(self, raw_dataset: List[List[str]],
                  word_batch: Union[WordBatch, None],
                  char_batch: Union[CharacterBatch, None],
-                 vocab_batch: VocabBatch,
+                 vocab_batch: Union[VocabBatch, None],
                  batch_size: int,
                  n_buckets: int = 10,
                  use_cuda: bool = False):

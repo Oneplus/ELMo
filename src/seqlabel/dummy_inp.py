@@ -6,5 +6,5 @@ class DummyInputEncoder(InputEncoderBase):
     def __init__(self):
         super(DummyInputEncoder, self).__init__()
 
-    def forward(self, x):
+    def forward(self, x, *args):
         return x

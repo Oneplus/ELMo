@@ -13,7 +13,7 @@ import numpy as np
 import h5py
 from bilm.bilm_base import BiLMBase
 from bilm.batch import Batcher, WordBatch, CharacterBatch, VocabBatch
-from bilm.io_util import dict2namedtuple, read_corpus, read_conll_corpus
+from bilm.io_util import dict2namedtuple, read_corpus_with_original_text, read_conll_corpus_with_original_text
 
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
                     level=logging.INFO)
@@ -103,14 +103,16 @@ def test_main():
     model.load_model(args.model)
 
     # read test data according to input format
-    read_function = read_corpus if args.input_format == 'plain' else read_conll_corpus
+    read_function = read_corpus_with_original_text if args.input_format == 'plain'\
+        else read_conll_corpus_with_original_text
 
-    raw_test_data = read_function(args.input, 10000,
-                                  conf['token_embedder'].get('max_characters_per_token', None))
+    raw_test_data, original_raw_test_data = read_function(args.input, 10000,
+                                                          conf['token_embedder'].get('max_characters_per_token', None))
 
     # create test batches from the input data.
     test_batcher = Batcher(raw_test_data, word_batch, char_batch, None,
-                           args.batch_size, sorting=False, shuffle=False)
+                           args.batch_size, sorting=False, shuffle=False,
+                           original_raw_dataset=original_raw_test_data)
 
     # configure the model to evaluation mode.
     model.eval()

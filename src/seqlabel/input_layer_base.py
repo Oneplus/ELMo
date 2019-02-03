@@ -7,5 +7,5 @@ class InputLayerBase(torch.nn.Module):
         super(InputLayerBase, self).__init__()
         self.input_field_name = input_field_name
 
-    def encoding_dim(self) -> int:
+    def get_output_dim(self) -> int:
         raise NotImplementedError()

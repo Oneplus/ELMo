@@ -235,8 +235,8 @@ def train():
         raw_test_data = None
 
     # Initialized vocab_batch
-    vocab_batch = VocabBatch(conf['classifier'].get('vocab_lower', False),
-                             conf['classifier'].get('vocab_normalize_digits', False),
+    vocab_batch = VocabBatch(conf['classifier'].get('vocab_cased', False),
+                             conf['classifier'].get('vocab_digit_normalized', False),
                              use_cuda)
     vocab_batch.create_dict_from_file(opt.vocab_path)
 
@@ -360,9 +360,11 @@ def test():
     args2 = dict2namedtuple(json.load(codecs.open(os.path.join(args.model, 'config.json'), 'r', encoding='utf-8')))
 
     with open(args2.config_path, 'r') as fin:
-        config = json.load(fin)
+        conf = json.load(fin)
 
-    vocab_batch = VocabBatch(use_cuda)
+    vocab_batch = VocabBatch(conf['classifier'].get('vocab_cased', False),
+                             conf['classifier'].get('vocab_digit_normalized', False),
+                             use_cuda)
     with codecs.open(os.path.join(args.model, 'vocab.dic'), 'r', encoding='utf-8') as fpi:
         for line in fpi:
             tokens = line.strip().split('\t')
@@ -371,7 +373,7 @@ def test():
             token, i = tokens
             vocab_batch.mapping[token] = int(i)
 
-    c = config['token_embedder']
+    c = conf['token_embedder']
     if c['char_dim'] > 0:
         char_batch = CharacterBatch('<oov>', '<pad>', '<eow>', not c.get('char_cased', True), use_cuda)
         with codecs.open(os.path.join(args.model, 'char.dic'), 'r', encoding='utf-8') as fpi:
@@ -396,14 +398,14 @@ def test():
     else:
         word_batch = None
 
-    model = Model(config, word_batch, char_batch, len(vocab_batch.mapping))
+    model = Model(conf, word_batch, char_batch, len(vocab_batch.mapping))
     if use_cuda:
         model.cuda()
 
     logger.info(str(model))
     model.load_model(args.model)
     raw_test_data = read_corpus(args.input, 10000,
-                                config['token_embedder'].get('max_characters_per_token', None))
+                                conf['token_embedder'].get('max_characters_per_token', None))
 
     test_batcher = Batcher(raw_test_data, word_batch, char_batch, vocab_batch,
                            args.batch_size, sorting=False, shuffle=False)

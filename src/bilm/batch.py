@@ -5,6 +5,7 @@ import gzip
 import logging
 import collections
 import random
+import re
 import numpy as np
 from sklearn.cluster import KMeans
 logger = logging.getLogger(__name__)

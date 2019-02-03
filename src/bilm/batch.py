@@ -220,7 +220,7 @@ class BatcherBase(object):
 
             lengths = self.length_batch.create_one_batch(data_in_one_batch)
             if self.original_dataset:
-                original_data_in_one_batch = [self.raw_dataset[i] for i in one_batch_indices]
+                original_data_in_one_batch = [self.original_dataset[i] for i in one_batch_indices]
                 text = self.text_batch.create_one_batch(original_data_in_one_batch)
             else:
                 text = self.text_batch.create_one_batch(data_in_one_batch)

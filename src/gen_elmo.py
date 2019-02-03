@@ -43,7 +43,7 @@ def test_main():
     # Configurations
     cmd = argparse.ArgumentParser('The testing components of')
     cmd.add_argument('--gpu', default=-1, type=int, help='use id of gpu, -1 if cpu.')
-    cmd.add_argument('--input_format', default='plain', choices=('plain', 'conll', 'conll_char', 'conll_char_vi'),
+    cmd.add_argument('--input_format', default='plain', choices=('plain', 'conll'),
                      help='the input format.')
     cmd.add_argument("--input", help="the path to the raw text file.")
     cmd.add_argument("--output_format", default='hdf5', help='the output format. Supported format includes (hdf5, txt).'
@@ -57,7 +57,7 @@ def test_main():
                           'of 3 layers.')
     cmd.add_argument("--model", required=True, help="path to save model")
     cmd.add_argument("--batch_size", "--batch", type=int, default=1, help='the batch size.')
-    args = cmd.parse_args(sys.argv[2:])
+    args = cmd.parse_args(sys.argv[1:])
 
     if args.gpu >= 0:
         torch.cuda.set_device(args.gpu)
@@ -66,20 +66,11 @@ def test_main():
     args2 = dict2namedtuple(json.load(codecs.open(os.path.join(args.model, 'config.json'), 'r', encoding='utf-8')))
 
     with open(args2.config_path, 'r') as fin:
-        config = json.load(fin)
+        conf = json.load(fin)
 
-    vocab_batch = VocabBatch(use_cuda)
-    with codecs.open(os.path.join(args.model, 'vocab.dic'), 'r', encoding='utf-8') as fpi:
-        for line in fpi:
-            tokens = line.strip().split('\t')
-            if len(tokens) == 1:
-                tokens.insert(0, '\u3000')
-            token, i = tokens
-            vocab_batch.mapping[token] = int(i)
-
-    char_inputs = config['token_embedder']
-    if char_inputs['char_dim'] > 0:
-        char_batch = CharacterBatch('<oov>', '<pad>', '<eow>', not char_inputs.get('char_cased', True), use_cuda)
+    c = conf['token_embedder']
+    if c['char_dim'] > 0:
+        char_batch = CharacterBatch('<oov>', '<pad>', '<eow>', not c.get('char_cased', True), use_cuda)
         with codecs.open(os.path.join(args.model, 'char.dic'), 'r', encoding='utf-8') as fpi:
             for line in fpi:
                 tokens = line.strip().split('\t')
@@ -90,8 +81,9 @@ def test_main():
     else:
         char_batch = None
 
-    if char_inputs['word_dim'] > 0:
-        word_batch = WordBatch(char_inputs.get('word_min_cut', 0), '<oov>', '<pad>', not char_inputs.get('word_cased', True), use_cuda)
+    if c['word_dim'] > 0:
+        word_batch = WordBatch(c.get('word_min_cut', 0), '<oov>', '<pad>',
+                               not c.get('word_cased', True), use_cuda)
         with codecs.open(os.path.join(args.model, 'word.dic'), 'r', encoding='utf-8') as fpi:
             for line in fpi:
                 tokens = line.strip().split('\t')
@@ -103,7 +95,7 @@ def test_main():
         word_batch = None
 
     # instantiate the model
-    model = Model(config, word_batch, char_batch)
+    model = Model(conf, word_batch, char_batch)
     if use_cuda:
         model.cuda()
 
@@ -113,11 +105,11 @@ def test_main():
     # read test data according to input format
     read_function = read_corpus if args.input_format == 'plain' else read_conll_corpus
 
-    raw_test_data = read_corpus(args.input, 10000,
-                                config['token_embedder'].get('max_characters_per_token', None))
+    raw_test_data = read_function(args.input, 10000,
+                                  conf['token_embedder'].get('max_characters_per_token', None))
 
     # create test batches from the input data.
-    test_batcher = Batcher(raw_test_data, word_batch, char_batch, vocab_batch,
+    test_batcher = Batcher(raw_test_data, word_batch, char_batch, None,
                            args.batch_size, sorting=False, shuffle=False)
 
     # configure the model to evaluation mode.
@@ -141,7 +133,7 @@ def test_main():
         fout = h5py.File(filename, 'w') if output_format == 'hdf5' else open(filename, 'w')
 
         handlers[output_format] = fout
-        dim = config['encoder']['projection_dim'] * 2
+        dim = conf['encoder']['projection_dim'] * 2
         n_layers = len(output_layers)
         if output_format == 'hdf5':
             info = np.asarray([dim, n_layers])
@@ -150,7 +142,7 @@ def test_main():
             print('#projection_dim: {}'.format(dim), file=fout)
             print('#n_layers: {}'.format(n_layers), file=fout)
 
-    for word_inputs, char_inputs, lengths, texts in test_batcher.get():
+    for word_inputs, char_inputs, lengths, texts, _ in test_batcher.get():
         output = model.forward(word_inputs, char_inputs, lengths)
         for i, text in enumerate(texts):
             sent = '\t'.join(text)
@@ -160,7 +152,7 @@ def test_main():
                 continue
             sent_set.add(sent)
 
-            data = output[i, 1:lengths[i] - 1, :].data
+            data = output[:, i, :lengths[i], :].data
             if use_cuda:
                 data = data.cpu()
             data = data.numpy()

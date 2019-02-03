@@ -190,8 +190,8 @@ class BatcherBase(object):
         self.word_batch = word_batch
         self.char_batch = char_batch
         self.vocab_batch = vocab_batch
-        self.length_batch = LengthBatch(vocab_batch.use_cuda)
-        self.text_batch = TextBatch(vocab_batch.use_cuda)
+        self.length_batch = LengthBatch(word_batch.use_cuda if word_batch else char_batch.use_cuda)
+        self.text_batch = TextBatch(word_batch.use_cuda if word_batch else char_batch.use_cuda)
         self.batch_size = batch_size
         self.use_cuda = use_cuda
 
@@ -218,7 +218,10 @@ class BatcherBase(object):
 
             lengths = self.length_batch.create_one_batch(data_in_one_batch)
             text = self.text_batch.create_one_batch(data_in_one_batch)
-            vocab = self.vocab_batch.create_one_batch(data_in_one_batch)
+            if self.vocab_batch:
+                vocab = self.vocab_batch.create_one_batch(data_in_one_batch)
+            else:
+                vocab = None
 
             yield word_inputs, char_inputs, lengths, text, vocab
 

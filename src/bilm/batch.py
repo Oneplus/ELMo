@@ -11,8 +11,14 @@ logger = logging.getLogger(__name__)
 
 
 class VocabBatch(object):
-    def __init__(self, use_cuda: bool):
+    digit_regex = re.compile(r'\d')
+
+    def __init__(self, lower: bool,
+                 normalize_digits: bool,
+                 use_cuda: bool):
         self.use_cuda = use_cuda
+        self.lower = lower
+        self.normalize_digits = normalize_digits
         self.mapping = {'<oov>': 0, '<pad>': 1, '<bos>': 2, '<eos>': 3}
 
     def create_dict_from_file(self, filename: str):
@@ -33,9 +39,15 @@ class VocabBatch(object):
         forward_batch = torch.LongTensor(batch_size, seq_len).fill_(1)
         backward_batch = torch.LongTensor(batch_size, seq_len).fill_(1)
         for i, raw_data in enumerate(raw_dataset):
-            for j, word in enumerate(raw_data):
-                forward_batch[i, j] = self.mapping.get(raw_data[j + 1] if j + 1 < len(raw_data) else '<eos>', 0)
-                backward_batch[i, j] = self.mapping.get((raw_data[j - 1] if j > 0 else '<bos>'), 0)
+            words = raw_data
+            if self.lower:
+                words = [word.lower() for word in words]
+            if self.normalize_digits:
+                words = [self.digit_regex.sub('0', word) for word in words]
+
+            for j, word in enumerate(words):
+                forward_batch[i, j] = self.mapping.get(words[j + 1] if j + 1 < len(words) else '<eos>', 0)
+                backward_batch[i, j] = self.mapping.get((words[j - 1] if j > 0 else '<bos>'), 0)
 
         if self.use_cuda:
             forward_batch = forward_batch.cuda()

@@ -5,14 +5,14 @@ from allennlp.modules.seq2seq_encoders.bidirectional_transformer_encoder import 
 from allennlp.modules.seq2seq_encoders.bidirectional_transformer_encoder import MultiHeadedAttention
 
 
-def local_mask(size, width, left_to_right=True):
+def local_mask(size, width, device, left_to_right=True):
     """Mask out subsequent positions."""
     attn_shape = (1, size, size)
     mask = np.triu(np.ones(attn_shape), k=-width - 1) * (1 - np.triu(np.ones(attn_shape), k=1))
     if not left_to_right:
         mask = np.flip(mask)
     mask = mask.astype('uint8')
-    return torch.from_numpy(mask)
+    return torch.from_numpy(mask).to(device)
 
 
 class SelfAttentiveLBLBiLM(torch.nn.Module):
@@ -80,11 +80,9 @@ class SelfAttentiveLBLBiLM(torch.nn.Module):
         forward_inputs = inputs
         backward_inputs = inputs
 
-        forward_mask = local_mask(sequence_len + self.width * 2, self.width)
-        backward_mask = local_mask(sequence_len + self.width * 2, self.width, left_to_right=False)
-        if self.use_cuda:
-            forward_mask = forward_mask.cuda()
-            backward_mask = backward_mask.cuda()
+        forward_mask = local_mask(sequence_len + self.width * 2, self.width, inputs.device)
+        backward_mask = local_mask(sequence_len + self.width * 2, self.width, inputs.device,
+                                   left_to_right=False)
 
         for i in range(self.n_layers):
             if self.use_position:

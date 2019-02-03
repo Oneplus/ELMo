@@ -235,7 +235,9 @@ def train():
         raw_test_data = None
 
     # Initialized vocab_batch
-    vocab_batch = VocabBatch(use_cuda)
+    vocab_batch = VocabBatch(conf['classifier'].get('vocab_lower', False),
+                             conf['classifier'].get('vocab_normalize_digits', False),
+                             use_cuda)
     vocab_batch.create_dict_from_file(opt.vocab_path)
 
     # Word

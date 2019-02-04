@@ -47,6 +47,8 @@ def read_conllu_dataset(path: str):
             lines = data.splitlines()
             items = []
             for line in lines:
+                if line.startswith('#'):
+                    continue
                 fields = tuple(line.strip().split())
                 if '.' in fields[0] or '-' in fields[0]:
                     continue
@@ -224,7 +226,7 @@ def train_model(epoch: int,
     model.train()
 
     witnessed_improved_valid_result = False
-    total_loss, total_tag = 0.0, 0
+    total_loss, total_tag = 0., 0.
     cnt = 0
     start_time = time.time()
 
@@ -234,7 +236,7 @@ def train_model(epoch: int,
         _, loss = model.forward(inputs, targets)
 
         total_loss += loss.item()
-        n_tags = sum(inputs['length'])
+        n_tags = inputs['length'].sum().item()
         total_tag += n_tags
         loss.backward()
 
@@ -244,25 +246,33 @@ def train_model(epoch: int,
         optimizer.step()
 
         if cnt % opt.report_steps == 0:
-            logger.info("Epoch={} iter={} lr={:.6f} loss={:.4f} time={:.2f}s".format(
+            logging_str = "| epoch {:3d} | step {:>8d} | lr {:.3g} | " \
+                          "ms/batch {:5.2f} | loss {:.4f} |".format(
                 epoch, cnt, optimizer.param_groups[0]['lr'],
-                1.0 * loss.item() / n_tags.float(), time.time() - start_time
-            ))
+                (time.time() - start_time) / opt.report_steps,
+                1.0 * loss.item() / n_tags.float(),
+            )
+
+            logger.info(logging_str)
             start_time = time.time()
 
         if cnt % opt.eval_steps == 0:
             valid_result = eval_model(model, valid_batch, ix2label, opt, opt.gold_valid_path)
-            logger.info("Epoch={} iter={} lr={:.6f} loss={:.4f} valid_acc={:.6f}".format(
-                epoch, cnt, optimizer.param_groups[0]['lr'], total_loss / total_tag, valid_result))
+            logging_str = "| epoch {:3d} | step {:>8d} | lr={:.3g} | loss {:.4f} | valid_acc {:.4f} |".format(
+                epoch, cnt, optimizer.param_groups[0]['lr'], float(total_loss) / total_tag, valid_result)
+
+            if valid_result > best_valid:
+                logging_str = logging_str + ' NEW |'
+
+            logger.info(logging_str)
 
             if valid_result > best_valid:
                 witnessed_improved_valid_result = True
                 torch.save(model.state_dict(), os.path.join(opt.model, 'model.pkl'))
-                logger.info("New record achieved!")
                 best_valid = valid_result
                 if test is not None:
                     test_result = eval_model(model, test_batch, ix2label, opt, opt.gold_test_path)
-                    logger.info("Epoch={} iter={} lr={:.6f} test_acc={:.6f}".format(
+                    logger.info("| epoch {:3d} | step {:>8d} | lr={:.3g} | test_acc {:.4f} |".format(
                         epoch, cnt, optimizer.param_groups[0]['lr'], test_result))
 
     return best_valid, test_result, witnessed_improved_valid_result
@@ -480,9 +490,6 @@ def train():
                             '{0}'.format(optimizer.param_groups[0]['lr']))
         else:
             patience = 0
-
-        logger.info('Time - encoder: {:.2f}s | embeddings: {:.2f}s | classification: {:.2f}s'.format(
-            model.encode_time / (epoch + 1), model.emb_time / (epoch + 1), model.classify_time / (epoch + 1)))
 
     logger.info("best_valid_acc: {:.6f}".format(best_valid))
     logger.info("test_acc: {:.6f}".format(test_result))

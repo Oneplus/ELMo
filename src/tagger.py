@@ -213,7 +213,7 @@ def eval_model(model: torch.nn.Module,
 def train_model(epoch: int,
                 conf: Dict,
                 opt: argparse.Namespace,
-                model: torch.nn.Module,
+                model: SeqLabelModel,
                 optimizer: torch.optim.Optimizer,
                 train_batch: BatcherBase,
                 valid_batch: BatcherBase,
@@ -228,13 +228,13 @@ def train_model(epoch: int,
     cnt = 0
     start_time = time.time()
 
-    for input_, segment_, _ in train_batch.get():
+    for inputs, targets, _ in train_batch.get():
         cnt += 1
         model.zero_grad()
-        _, loss = model.forward(input_, segment_)
+        _, loss = model.forward(inputs, targets)
 
         total_loss += loss.item()
-        n_tags = sum(input_['length'])
+        n_tags = sum(inputs['length'])
         total_tag += n_tags
         loss.backward()
 
@@ -244,7 +244,7 @@ def train_model(epoch: int,
         optimizer.step()
 
         if cnt % opt.report_steps == 0:
-            logger.info("Epoch={} iter={} lr={:.6f} train_ave_loss={:.6f} time={:.2f}s".format(
+            logger.info("Epoch={} iter={} lr={:.6f} loss={:.4f} time={:.2f}s".format(
                 epoch, cnt, optimizer.param_groups[0]['lr'],
                 1.0 * loss.item() / n_tags.float(), time.time() - start_time
             ))
@@ -252,8 +252,8 @@ def train_model(epoch: int,
 
         if cnt % opt.eval_steps == 0:
             valid_result = eval_model(model, valid_batch, ix2label, opt, opt.gold_valid_path)
-            logger.info("Epoch={} iter={} lr={:.6f} train_loss={:.6f} valid_acc={:.6f}".format(
-                epoch, cnt, optimizer.param_groups[0]['lr'], total_loss, valid_result))
+            logger.info("Epoch={} iter={} lr={:.6f} loss={:.4f} valid_acc={:.6f}".format(
+                epoch, cnt, optimizer.param_groups[0]['lr'], total_loss / total_tag, valid_result))
 
             if valid_result > best_valid:
                 witnessed_improved_valid_result = True
@@ -280,6 +280,7 @@ def train():
     cmd.add_argument('--gold_valid_path', type=str, help='the path to the validation file.')
     cmd.add_argument('--gold_test_path', type=str, help='the path to the testing file.')
     cmd.add_argument("--model", required=True, help="path to save model")
+    cmd.add_argument('--override', help='override embeddings')
     cmd.add_argument("--batch_size", "--batch", type=int, default=32, help='the batch size.')
     cmd.add_argument("--max_epoch", type=int, default=100, help='the maximum number of iteration.')
     cmd.add_argument("--report_steps", type=int, default=1024, help='eval every x batches')
@@ -299,6 +300,13 @@ def train():
             torch.cuda.manual_seed(opt.seed)
 
     conf = json.load(open(opt.config, 'r'))
+    if opt.override:
+        name, key, value = opt.override.split(':', 2)
+        c = conf['input']
+        for data in c:
+            if data['name'] == name:
+                data[key] = value
+
     if opt.gold_valid_path is None:
         opt.gold_valid_path = opt.valid_path
 
@@ -473,9 +481,8 @@ def train():
         else:
             patience = 0
 
-        logger.info('Total encoder time: {:.2f}s'.format(model.encode_time / (epoch + 1)))
-        logger.info('Total embedding time: {:.2f}s'.format(model.emb_time / (epoch + 1)))
-        logger.info('Total classify time: {:.2f}s'.format(model.classify_time / (epoch + 1)))
+        logger.info('Time - encoder: {:.2f}s | embeddings: {:.2f}s | classification: {:.2f}s'.format(
+            model.encode_time / (epoch + 1), model.emb_time / (epoch + 1), model.classify_time / (epoch + 1)))
 
     logger.info("best_valid_acc: {:.6f}".format(best_valid))
     logger.info("test_acc: {:.6f}".format(test_result))

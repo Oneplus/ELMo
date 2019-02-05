@@ -135,8 +135,9 @@ class WordBatch(InputBatchBase):
 
 
 class CharacterBatch(InputBatchBase):
-    def __init__(self, oov: str, pad: str, eow: str, lower: bool, use_cuda: bool):
+    def __init__(self, min_char: int, oov: str, pad: str, eow: str, lower: bool, use_cuda: bool):
         super(CharacterBatch, self).__init__(use_cuda)
+        self.min_char = min_char
         self.oov = oov
         self.pad = pad
         self.eow = eow
@@ -149,6 +150,7 @@ class CharacterBatch(InputBatchBase):
         batch_size = len(raw_dataset)
         seq_len = max([len(input_) for input_ in raw_dataset])
         max_char_len = max([len(word) for raw_data in raw_dataset for word in raw_data])
+        max_char_len = max(max_char_len, self.min_char)
 
         batch = torch.LongTensor(batch_size, seq_len, max_char_len).fill_(2)
         lengths = torch.LongTensor(batch_size, seq_len).fill_(1)

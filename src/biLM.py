@@ -248,7 +248,8 @@ def train():
 
     # Character
     if c.get('char_dim', 0) > 0:
-        char_batch = CharacterBatch('<oov>', '<pad>', '<eow>', not c.get('char_cased', True), use_cuda)
+        char_batch = CharacterBatch(max([w for w, _ in c['filters']]),
+                                    '<oov>', '<pad>', '<eow>', not c.get('char_cased', True), use_cuda)
         char_batch.create_dict_from_dataset(raw_training_data)
     else:
         char_batch = None
@@ -375,7 +376,8 @@ def test():
 
     c = conf['token_embedder']
     if c['char_dim'] > 0:
-        char_batch = CharacterBatch('<oov>', '<pad>', '<eow>', not c.get('char_cased', True), use_cuda)
+        char_batch = CharacterBatch(max([w for w, _ in c['filters']]),
+                                    '<oov>', '<pad>', '<eow>', not c.get('char_cased', True), use_cuda)
         with codecs.open(os.path.join(args.model, 'char.dic'), 'r', encoding='utf-8') as fpi:
             for line in fpi:
                 tokens = line.strip().split('\t')

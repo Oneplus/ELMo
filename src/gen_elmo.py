@@ -12,7 +12,7 @@ import torch
 import numpy as np
 import h5py
 from bilm.bilm_base import BiLMBase
-from bilm.batch import Batcher, WordBatch, CharacterBatch, VocabBatch
+from bilm.batch import Batcher, WordBatch, CharacterBatch
 from bilm.io_util import dict2namedtuple, read_corpus_with_original_text, read_conll_corpus_with_original_text
 
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
@@ -70,7 +70,8 @@ def test_main():
 
     c = conf['token_embedder']
     if c['char_dim'] > 0:
-        char_batch = CharacterBatch('<oov>', '<pad>', '<eow>', not c.get('char_cased', True), use_cuda)
+        char_batch = CharacterBatch(max([w for w, _ in c['filters']]),
+                                    '<oov>', '<pad>', '<eow>', not c.get('char_cased', True), use_cuda)
         with codecs.open(os.path.join(args.model, 'char.dic'), 'r', encoding='utf-8') as fpi:
             for line in fpi:
                 tokens = line.strip().split('\t')

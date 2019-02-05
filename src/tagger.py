@@ -246,19 +246,17 @@ def train_model(epoch: int,
         optimizer.step()
 
         if cnt % opt.report_steps == 0:
-            logging_str = "| epoch {:3d} | step {:>8d} | lr {:.3g} | " \
-                          "ms/batch {:5.2f} | loss {:.4f} |".format(
-                epoch, cnt, optimizer.param_groups[0]['lr'],
-                (time.time() - start_time) / opt.report_steps,
-                1.0 * loss.item() / n_tags.float(),
-            )
+            logging_str = "| epoch {:3d} | step {:>6d} | lr {:.3g} | " \
+                          "ms/batch {:5.2f} | loss {:.4f} |".format(epoch, cnt, optimizer.param_groups[0]['lr'],
+                                                                    (time.time() - start_time) / opt.report_steps,
+                                                                    1.0 * loss.item() / n_tags)
 
             logger.info(logging_str)
             start_time = time.time()
 
         if cnt % opt.eval_steps == 0:
             valid_result = eval_model(model, valid_batch, ix2label, opt, opt.gold_valid_path)
-            logging_str = "| epoch {:3d} | step {:>8d} | lr={:.3g} | loss {:.4f} | valid_acc {:.4f} |".format(
+            logging_str = "| epoch {:3d} | step {:>6d} | lr {:.3g} | loss     {:.4f} | dev  {:.4f} |".format(
                 epoch, cnt, optimizer.param_groups[0]['lr'], float(total_loss) / total_tag, valid_result)
 
             if valid_result > best_valid:
@@ -272,7 +270,7 @@ def train_model(epoch: int,
                 best_valid = valid_result
                 if test is not None:
                     test_result = eval_model(model, test_batch, ix2label, opt, opt.gold_test_path)
-                    logger.info("| epoch {:3d} | step {:>8d} | lr={:.3g} | test_acc {:.4f} |".format(
+                    logger.info("| epoch {:3d} | step {:>6d} | lr {:.3g} |                 | test {:.4f} |".format(
                         epoch, cnt, optimizer.param_groups[0]['lr'], test_result))
 
     return best_valid, test_result, witnessed_improved_valid_result
@@ -491,8 +489,8 @@ def train():
         else:
             patience = 0
 
-    logger.info("best_valid_acc: {:.6f}".format(best_valid))
-    logger.info("test_acc: {:.6f}".format(test_result))
+    logger.info("best_valid_acc: {:.4f}".format(best_valid))
+    logger.info("test_acc: {:.4f}".format(test_result))
 
 
 def test():

@@ -84,22 +84,23 @@ class SelfAttentiveLBLBiLM(torch.nn.Module):
         backward_mask = local_mask(sequence_len + self.width * 2, self.width, inputs.device,
                                    left_to_right=False)
 
-        for i in range(self.n_layers):
+        for layer_index in range(self.n_layers):
             if self.use_position:
                 forward_inputs = self.position(forward_inputs)
                 backward_inputs = self.position(backward_inputs)
 
-            forward_inputs = torch.cat([self.forward_paddings[i].expand(batch_size, -1, -1),
+            forward_inputs = torch.cat([self.forward_paddings[layer_index].expand(batch_size, -1, -1),
                                         forward_inputs,
-                                        self.backward_paddings[i].expand(batch_size, -1, -1)], dim=1)
-            backward_inputs = torch.cat([self.forward_paddings[i].expand(batch_size, -1, -1),
+                                        self.backward_paddings[layer_index].expand(batch_size, -1, -1)], dim=1)
+            backward_inputs = torch.cat([self.forward_paddings[layer_index].expand(batch_size, -1, -1),
                                          backward_inputs,
-                                         self.backward_paddings[i].expand(batch_size, -1, -1)], dim=1)
+                                         self.backward_paddings[layer_index].expand(batch_size, -1, -1)], dim=1)
 
-            forward_inputs = self.forward_attns[i](forward_inputs, forward_inputs,
-                                                   forward_inputs, forward_mask)
-            backward_inputs = self.backward_attns[i](backward_inputs, backward_inputs,
-                                                     backward_inputs, backward_mask)
+            forward_inputs = self.forward_attns[layer_index](forward_inputs, forward_inputs,
+                                                             forward_inputs, forward_mask)
+            backward_inputs = self.backward_attns[layer_index](backward_inputs, backward_inputs,
+                                                               backward_inputs, backward_mask)
+            print(self.forward_weights[layer_index].size())
 
             forward_steps, backward_steps = [], []
             for start in range(sequence_len):
@@ -109,12 +110,12 @@ class SelfAttentiveLBLBiLM(torch.nn.Module):
 
                 if self.use_relative_position_weights:
                     forward_output = forward_output + forward_inputs.narrow(1, start, self.width + 1). \
-                        transpose(-2, -1).matmul(self.forward_weights[i])
+                        transpose(-2, -1).matmul(self.forward_weights[layer_index])
                     backward_output = backward_output + backward_inputs.narrow(1, end, self.width + 1). \
-                        transpose(-2, -1).matmul(self.backward_weights[i])
+                        transpose(-2, -1).matmul(self.backward_weights[layer_index])
 
-                forward_output = self.forward_blocks[i](forward_output)
-                backward_output = self.backward_blocks[i](backward_output)
+                forward_output = self.forward_blocks[layer_index](forward_output)
+                backward_output = self.backward_blocks[layer_index](backward_output)
 
                 forward_steps.append(forward_output)
                 backward_steps.append(backward_output)

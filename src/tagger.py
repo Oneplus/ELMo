@@ -248,7 +248,7 @@ def train_model(epoch: int,
         if cnt % opt.report_steps == 0:
             logging_str = "| epoch {:3d} | step {:>6d} | lr {:.3g} | " \
                           "ms/batch {:5.2f} | loss {:.4f} |".format(epoch, cnt, optimizer.param_groups[0]['lr'],
-                                                                    (time.time() - start_time) / opt.report_steps,
+                                                                    1000 * (time.time() - start_time) / opt.report_steps,
                                                                     1.0 * loss.item() / n_tags)
 
             logger.info(logging_str)
@@ -256,7 +256,7 @@ def train_model(epoch: int,
 
         if cnt % opt.eval_steps == 0:
             valid_result = eval_model(model, valid_batch, ix2label, opt, opt.gold_valid_path)
-            logging_str = "| epoch {:3d} | step {:>6d} | lr {:.3g} | loss     {:.4f} | dev  {:.4f} |".format(
+            logging_str = "| epoch {:3d} | step {:>6d} | lr {:.3g} | loss    {:.4f} | dev  {:.4f} |".format(
                 epoch, cnt, optimizer.param_groups[0]['lr'], float(total_loss) / total_tag, valid_result)
 
             if valid_result > best_valid:
@@ -270,7 +270,7 @@ def train_model(epoch: int,
                 best_valid = valid_result
                 if test is not None:
                     test_result = eval_model(model, test_batch, ix2label, opt, opt.gold_test_path)
-                    logger.info("| epoch {:3d} | step {:>6d} | lr {:.3g} |                 | test {:.4f} |".format(
+                    logger.info("| epoch {:3d} | step {:>6d} | lr {:.3g} |                | test {:.4f} |".format(
                         epoch, cnt, optimizer.param_groups[0]['lr'], test_result))
 
     return best_valid, test_result, witnessed_improved_valid_result
@@ -506,7 +506,8 @@ def test():
 
     model_path = opt.model
 
-    model_cmd_opt = dict2namedtuple(json.load(codecs.open(os.path.join(model_path, 'config.json'), 'r', encoding='utf-8')))
+    model_cmd_opt = dict2namedtuple(json.load(codecs.open(os.path.join(model_path, 'config.json'), 'r',
+                                                          encoding='utf-8')))
     conf = json.load(open(model_cmd_opt.config, 'r'))
 
     torch.manual_seed(model_cmd_opt.seed)

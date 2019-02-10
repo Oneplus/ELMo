@@ -109,15 +109,17 @@ def train_model(epoch: int,
                 train_batch: BatcherBase,
                 valid_batch: BatcherBase,
                 test_batch: BatcherBase,
-                best_train: float, best_valid: float, test_result: float):
+                best_train: float, best_valid: float, test_ppl: float):
     model.train()
 
     total_loss, total_tag = 0., 0.
-    cnt = 0
+    step = 0
     start_time = time.time()
 
+    improved = False
+    warmup_step = conf['optimizer'].get('warmup_step', None)
+
     for word_inputs, char_inputs, lengths, texts, targets in train_batch.get():
-        cnt += 1
         model.zero_grad()
         forward_loss, backward_loss = model.forward(word_inputs, char_inputs, lengths, targets)
 
@@ -131,39 +133,55 @@ def train_model(epoch: int,
             torch.nn.utils.clip_grad_norm_(model.parameters(), conf['optimizer']['clip_grad'])
 
         optimizer.step()
-        if cnt % opt.report_steps == 0:
-            logger.info("Epoch={} iter={} lr={:.6f} train_ppl={:.4f} time={:.2f}s".format(
-                epoch, cnt, optimizer.param_groups[0]['lr'],
-                np.exp(total_loss / total_tag), time.time() - start_time))
+        step += 1
+        global_step = epoch * train_batch.num_batches() + step
+        if warmup_step is not None and global_step < warmup_step:
+            curr_lr = conf['optimizer']['lr'] * global_step / warmup_step
+            optimizer.param_groups[0]['lr'] = curr_lr
+
+        if step % opt.report_steps == 0:
+            log_str = "| epoch {:3d} | step {:>6d} | lr {:.3g} | ms/batch {:5.2f} | ppl {:>4.2f} |".format(
+                epoch, step, optimizer.param_groups[0]['lr'],
+                1000 * (time.time() - start_time) / opt.report_steps,
+                np.exp(1.0 * loss.item() / n_tags))
+            logger.info(log_str)
             start_time = time.time()
 
-        if cnt % opt.eval_steps == 0 or cnt % train_batch.num_batches() == 0:
+        if step % opt.eval_steps == 0 or step % train_batch.num_batches() == 0:
             train_ppl = np.exp(total_loss / total_tag)
-            logger.info("Epoch={} iter={} lr={:.6f} train_ppl={:.6f}".format(
-                epoch, cnt, optimizer.param_groups[0]['lr'], train_ppl))
+            log_str = "| epoch {:3d} | step {:>6d} | lr {:.3g} | ppl {:>4.2f} |".format(
+                epoch, step, optimizer.param_groups[0]['lr'], train_ppl)
 
             if valid_batch is None:
                 if train_ppl < best_train:
                     best_train = train_ppl
-                    logger.info("New record achieved on training dataset!")
+                    log_str += ' NEW |'
+                    logger.info(log_str)
+
+                    improved = True
                     model.save_model(opt.model, opt.save_classify_layer)
             else:
+                logger.info(log_str)
                 if train_ppl < best_train:
                     best_train = train_ppl
                 valid_ppl = eval_model(model, valid_batch)
-                logger.info("Epoch={} iter={} lr={:.4f} valid_ppl={:.4f}".format(
-                    epoch, cnt, optimizer.param_groups[0]['lr'], valid_ppl))
+                log_str = "| epoch {:3d} | step {:>6d} | lr {:.3g} | dev ppl {:>4.2f} |".format(
+                    epoch, step, optimizer.param_groups[0]['lr'], valid_ppl)
 
                 if valid_ppl < best_valid:
+                    improved = True
                     model.save_model(opt.model, opt.save_classify_layer)
                     best_valid = valid_ppl
-                    logger.info("New record achieved!")
+                    log_str += ' NEW |'
+                    logger.info(log_str)
 
-                    if test is not None:
-                        test_result = eval_model(model, test_batch)
-                        logger.info("Epoch={} iter={} lr={:.4f} test_ppl={:.4f}".format(
-                            epoch, cnt, optimizer.param_groups[0]['lr'], test_result))
-    return best_train, best_valid, test_result
+                    if test_batch is not None:
+                        test_ppl = eval_model(model, test_batch)
+                        logger.info("| epoch {:3d} | step {:>6d} | lr {:.3g} | test ppl {:>4.2f} |".format(
+                            epoch, step, optimizer.param_groups[0]['lr'], test_ppl))
+                else:
+                    logger.info(log_str)
+    return best_train, best_valid, test_ppl, improved
 
 
 def train():
@@ -179,8 +197,6 @@ def train():
     cmd.add_argument("--batch_size", "--batch", type=int, default=32, help='the batch size.')
     cmd.add_argument("--max_epoch", type=int, default=100, help='the maximum number of iteration.')
     cmd.add_argument('--max_sent_len', type=int, default=20, help='maximum sentence length.')
-    cmd.add_argument('--min_count', type=int, default=5, help='minimum word count.')
-    cmd.add_argument('--max_vocab_size', type=int, default=150000, help='maximum vocabulary size.')
     cmd.add_argument('--save_classify_layer', default=False, action='store_true',
                      help="whether to save the classify layer")
     cmd.add_argument('--valid_size', type=int, default=0, help="size of validation dataset when there's no valid.")
@@ -326,16 +342,31 @@ def train():
     else:
         raise ValueError('Unknown optimizer name: {0}'.format(optimizer_name))
 
-    decay_rate = c.get('decay_rate', 1.0)
     best_train, best_valid, test_result = 1e8, 1e8, 1e8
+    max_decay_times = c.get('max_decay_times', 5)
+    max_patience = c.get('max_patience', 5)
+    patience = 0
+    decay_times = 0
+    decay_rate = c.get('decay_rate', 0.5)
 
     for epoch in range(opt.max_epoch):
-        best_train, best_valid, test_result = train_model(
+        best_train, best_valid, test_result, improved = train_model(
             epoch, conf, opt, model, optimizer, training_batcher, valid_batcher, test_batcher,
             best_train, best_valid, test_result)
 
-        if 0. < decay_rate <= 1.:
-            optimizer.param_groups[0]['lr'] *= decay_rate
+        if not improved:
+            patience += 1
+            if patience == max_patience:
+                decay_times += 1
+                if decay_times == max_decay_times:
+                    break
+
+                optimizer.param_groups[0]['lr'] *= decay_rate
+                patience = 0
+                logger.info('Max patience is reached, decay learning rate to '
+                            '{0}'.format(optimizer.param_groups[0]['lr']))
+        else:
+            patience = 0
 
     if raw_valid_data is None:
         logger.info("best train ppl: {:.6f}.".format(best_train))

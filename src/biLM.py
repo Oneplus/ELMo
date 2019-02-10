@@ -127,10 +127,17 @@ def train_model(epoch: int,
         total_loss += loss.item()
         n_tags = lengths.sum().item()
         total_tag += n_tags
-        loss.backward()
+
+        if conf['optimizer']['fp16']:
+            optimizer.backward(loss)
+        else:
+            loss.backward()
 
         if 'clip_grad' in conf['optimizer']:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), conf['optimizer']['clip_grad'])
+            if conf['optimizer']['fp16']:
+                optimizer.clip_master_grads(conf['optimizer']['clip_grad'])
+            else:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), conf['optimizer']['clip_grad'])
 
         optimizer.step()
         step += 1
@@ -149,7 +156,7 @@ def train_model(epoch: int,
 
         if step % opt.eval_steps == 0 or step % train_batch.num_batches() == 0:
             train_ppl = np.exp(total_loss / total_tag)
-            log_str = "| epoch {:3d} | step {:>6d} | lr {:.3g} | ppl {:>4.2f} |".format(
+            log_str = "| epoch {:3d} | step {:>6d} | lr {:.3g} |     ppl {:>4.2f} |".format(
                 epoch, step, optimizer.param_groups[0]['lr'], train_ppl)
 
             if valid_batch is None:
@@ -165,7 +172,7 @@ def train_model(epoch: int,
                 if train_ppl < best_train:
                     best_train = train_ppl
                 valid_ppl = eval_model(model, valid_batch)
-                log_str = "| epoch {:3d} | step {:>6d} | lr {:.3g} | dev ppl {:>4.2f} |".format(
+                log_str = "| epoch {:3d} | step {:>6d} | lr {:.3g} |  dev ppl {:>4.2f} |".format(
                     epoch, step, optimizer.param_groups[0]['lr'], valid_ppl)
 
                 if valid_ppl < best_valid:
@@ -222,6 +229,20 @@ def train():
             torch.cuda.manual_seed(opt.seed)
 
     use_cuda = opt.gpu >= 0 and torch.cuda.is_available()
+    use_fp16 = False
+    if conf['optimizer'].get('fp16', False):
+        use_fp16 = True
+        if not use_cuda:
+            logger.warning('WARNING: fp16 requires --gpu, ignoring fp16 option')
+            conf['optimizer']['fp16'] = False
+            use_fp16 = False
+        else:
+            try:
+                from apex.fp16_utils import FP16_Optimizer
+            except:
+                print('WARNING: apex not installed, ignoring --fp16 option')
+                conf['optimizer']['fp16'] = False
+                use_fp16 = False
 
     c = conf['token_embedder']
     token_embedder_max_chars = c.get('max_characters_per_token', None)
@@ -264,8 +285,11 @@ def train():
 
     # Character
     if c.get('char_dim', 0) > 0:
-        char_batch = CharacterBatch(max([w for w, _ in c['filters']]),
-                                    '<oov>', '<pad>', '<eow>', not c.get('char_cased', True), use_cuda)
+        if c['name'] == 'cnn':
+            char_batch = CharacterBatch(max([w for w, _ in c['filters']]),
+                                        '<oov>', '<pad>', '<eow>', not c.get('char_cased', True), use_cuda)
+        else:
+            char_batch = CharacterBatch(1, '<oov>', '<pad>', '<eow>', not c.get('char_cased', True), use_cuda)
         char_batch.create_dict_from_dataset(raw_training_data)
     else:
         char_batch = None
@@ -281,14 +305,14 @@ def train():
     # If there is valid, create valid batch.
     if raw_valid_data is not None:
         valid_batcher = Batcher(raw_valid_data, word_batch, char_batch, vocab_batch,
-                                opt.batch_size, sorting=False, shuffle=False)
+                                opt.batch_size, keep_full=True, sorting=True, shuffle=False)
     else:
         valid_batcher = None
 
     # If there is test, create test batch.
     if raw_test_data is not None:
         test_batcher = Batcher(raw_test_data, word_batch, char_batch, vocab_batch,
-                               opt.batch_size, sorting=False, shuffle=False)
+                               opt.batch_size, keep_full=True, sorting=True, shuffle=False)
     else:
         test_batcher = None
 
@@ -300,6 +324,8 @@ def train():
     logger.info(str(model))
     if use_cuda:
         model = model.cuda()
+        if use_fp16:
+            model = model.half()
 
     # Save meta data of
     try:
@@ -328,6 +354,7 @@ def train():
     json.dump(vars(opt), codecs.open(os.path.join(opt.model, 'config.json'), 'w', encoding='utf-8'))
 
     c = conf['optimizer']
+
     optimizer_name = c['type'].lower()
     params = filter(lambda param: param.requires_grad, model.parameters())
     if optimizer_name == 'adamax':
@@ -341,6 +368,12 @@ def train():
                                     eps=c.get('eps', 1e-8))
     else:
         raise ValueError('Unknown optimizer name: {0}'.format(optimizer_name))
+
+    if use_fp16:
+        optimizer = FP16_Optimizer(optimizer,
+                                   static_loss_scale=1.,
+                                   dynamic_loss_scale=True,
+                                   dynamic_loss_args={'init_scale': 2 ** 16})
 
     best_train, best_valid, test_result = 1e8, 1e8, 1e8
     max_decay_times = c.get('max_decay_times', 5)
@@ -407,8 +440,11 @@ def test():
 
     c = conf['token_embedder']
     if c['char_dim'] > 0:
-        char_batch = CharacterBatch(max([w for w, _ in c['filters']]),
-                                    '<oov>', '<pad>', '<eow>', not c.get('char_cased', True), use_cuda)
+        if c['name'] == 'cnn':
+            char_batch = CharacterBatch(max([w for w, _ in c['filters']]),
+                                        '<oov>', '<pad>', '<eow>', not c.get('char_cased', True), use_cuda)
+        else:
+            char_batch = CharacterBatch(1, '<oov>', '<pad>', '<eow>', not c.get('char_cased', True), use_cuda)
         with codecs.open(os.path.join(args.model, 'char.dic'), 'r', encoding='utf-8') as fpi:
             for line in fpi:
                 tokens = line.strip().split('\t')
@@ -441,7 +477,7 @@ def test():
                                 conf['token_embedder'].get('max_characters_per_token', None))
 
     test_batcher = Batcher(raw_test_data, word_batch, char_batch, vocab_batch,
-                           args.batch_size, sorting=False, shuffle=False)
+                           args.batch_size, keep_full=True, sorting=True, shuffle=False)
 
     test_result = eval_model(model, test_batcher)
 

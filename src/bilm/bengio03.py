@@ -39,8 +39,8 @@ class Bengio03HighwayBiLm(torch.nn.Module):
             forward_blocks.append(Highway(hidden_size, num_layers=n_highway))
             backward_blocks.append(Highway(hidden_size, num_layers=n_highway))
 
-            forward_projects.append(torch.nn.Linear(context_input_size, hidden_size))
-            backward_projects.append(torch.nn.Linear(context_input_size, hidden_size))
+            forward_projects.append(torch.nn.Linear(self.context_input_size, hidden_size))
+            backward_projects.append(torch.nn.Linear(self.context_input_size, hidden_size))
 
         self.forward_projects = torch.nn.ModuleList(forward_projects)
         self.backward_projects = torch.nn.ModuleList(backward_projects)
@@ -55,15 +55,12 @@ class Bengio03HighwayBiLm(torch.nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self):
-        for layer in range(self.n_layers):
-            torch.nn.init.xavier_uniform_(self.forward_paddings[layer])
-            torch.nn.init.xavier_uniform_(self.backward_paddings[layer])
+        for layer_index in range(self.n_layers):
+            torch.nn.init.xavier_uniform_(self.forward_blocks[layer_index].weight)
+            torch.nn.init.xavier_uniform_(self.backward_blocks[layer_index].weight)
 
-            torch.nn.init.xavier_uniform_(self.forward_blocks[layer].weight)
-            torch.nn.init.xavier_uniform_(self.backward_blocks[layer].weight)
-
-            self.forward_blocks[layer].bias.fill_(0.)
-            self.backward_blocks[layer].bias.fill_(0.)
+            self.forward_blocks[layer_index].bias.fill_(0.)
+            self.backward_blocks[layer_index].bias.fill_(0.)
 
     def forward(self, inputs: torch.Tensor, mask: torch.Tensor):
         batch_size, sequence_len, dim = inputs.size()
@@ -132,8 +129,8 @@ class Bengio03ResNetBiLm(torch.nn.Module):
             forward_paddings.append(torch.nn.Parameter(torch.randn(width, hidden_size) / np.sqrt(hidden_size)))
             backward_paddings.append(torch.nn.Parameter(torch.randn(width, hidden_size) / np.sqrt(hidden_size)))
 
-            forward_projects.append(torch.nn.Linear(context_input_size, hidden_size))
-            backward_projects.append(torch.nn.Linear(context_input_size, hidden_size))
+            forward_projects.append(torch.nn.Linear(self.context_input_size, hidden_size))
+            backward_projects.append(torch.nn.Linear(self.context_input_size, hidden_size))
 
         self.forward_projects = torch.nn.ModuleList(forward_projects)
         self.backward_projects = torch.nn.ModuleList(backward_projects)

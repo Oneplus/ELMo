@@ -88,13 +88,12 @@ class BiLMBase(torch.nn.Module):
                                               use_position=c.get('position', False),
                                               dropout=conf['dropout'])
         elif encoder_name == 'lblhighway':
-            self.encoder = LBLHighwayBiLmV2(width=c['width'],
-                                            input_size=c['projection_dim'],
-                                            hidden_size=c['projection_dim'],
-                                            n_layers=c['n_layers'],
-                                            n_highway=c['n_highway'],
-                                            use_position=c.get('position', False),
-                                            dropout=conf['dropout'])
+            self.encoder = LBLHighwayBiLm(width=c['width'],
+                                          input_size=c['projection_dim'],
+                                          hidden_size=c['projection_dim'],
+                                          n_layers=c['n_layers'],
+                                          n_highway=c['n_highway'],
+                                          use_position=c.get('position', False))
         elif encoder_name == 'lblresnet':
             self.encoder = LBLResNetBiLm(width=c['width'],
                                          input_size=c['projection_dim'],
@@ -118,8 +117,8 @@ class BiLMBase(torch.nn.Module):
         self.output_dim = conf['encoder']['projection_dim']
 
     def _encoding(self, word_inputs: torch.Tensor,
-                chars_inputs: torch.Tensor,
-                lengths: torch.Tensor,):
+                  chars_inputs: torch.Tensor,
+                  lengths: torch.Tensor,):
 
         embedded_tokens = self.token_embedder(word_inputs, chars_inputs)
         embedded_tokens = self.dropout(embedded_tokens)

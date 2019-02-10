@@ -35,9 +35,6 @@ class SelfAttentiveLBLBiLM(torch.nn.Module):
         self.width = width
         self.hidden_size = hidden_size
 
-        self.dropout = torch.nn.Dropout(dropout)
-        self.activation = torch.nn.ReLU()
-
         forward_attns, backward_attns = [], []
         forward_paddings, backward_paddings = [], []
         forward_blocks, backward_blocks = [], []

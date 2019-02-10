@@ -14,15 +14,11 @@ class LBLHighwayBiLm(torch.nn.Module):
                  hidden_size: int,
                  n_layers: int,
                  n_highway: int,
-                 use_position: bool = False,
-                 dropout: float = 0.0):
+                 use_position: bool = False):
         super(LBLHighwayBiLm, self).__init__()
         self.use_position = use_position
         self.n_layers = n_layers = n_layers
         self.n_highway = n_highway = n_highway
-
-        self.dropout = torch.nn.Dropout(dropout)
-        self.activation = torch.nn.ReLU()
 
         self.width = width
         self.input_size = input_size
@@ -98,15 +94,11 @@ class LBLHighwayBiLmV2(torch.nn.Module):
                  hidden_size: int,
                  n_layers: int,
                  n_highway: int,
-                 use_position: bool = False,
-                 dropout: float = 0.0):
+                 use_position: bool = False):
         super(LBLHighwayBiLmV2, self).__init__()
         self.use_position = use_position
         self.n_layers = n_layers = n_layers
         self.n_highway = n_highway = n_highway
-
-        self.dropout = torch.nn.Dropout(dropout)
-        self.activation = torch.nn.ReLU()
 
         self.width = width
         self.input_size = input_size
@@ -202,19 +194,19 @@ class LBLResNetBiLm(torch.nn.Module):
         self.backward_weights = torch.nn.Parameter(backward_weights)
 
         if self.use_position:
-            self.position = PositionalEncoding(hidden_size, self.config['dropout'])
+            self.position = PositionalEncoding(hidden_size)
 
         self.forward_linears = torch.nn.ModuleList(
-            [PositionwiseFeedForward(hidden_size, hidden_size, self.config['dropout'])
+            [PositionwiseFeedForward(hidden_size, hidden_size, dropout)
              for _ in range(n_layers)])
         self.backward_linears = torch.nn.ModuleList(
-            [PositionwiseFeedForward(hidden_size, hidden_size, self.config['dropout'])
+            [PositionwiseFeedForward(hidden_size, hidden_size, dropout)
              for _ in range(n_layers)])
 
         self.forward_blocks = torch.nn.ModuleList(
-            [SublayerConnection(hidden_size, self.config['dropout']) for _ in range(n_layers)])
+            [SublayerConnection(hidden_size, dropout) for _ in range(n_layers)])
         self.backward_blocks = torch.nn.ModuleList(
-            [SublayerConnection(hidden_size, self.config['dropout']) for _ in range(n_layers)])
+            [SublayerConnection(hidden_size, dropout) for _ in range(n_layers)])
 
     def forward(self, inputs: torch.Tensor, masks: torch.Tensor):
         batch_size, sequence_len, dim = inputs.size()

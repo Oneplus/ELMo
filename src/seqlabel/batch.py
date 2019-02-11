@@ -210,10 +210,6 @@ class Batcher(BatcherBase):
             new_orders.sort(key=lambda l: len(self.raw_dataset[l]), reverse=True)
 
         sorted_raw_dataset = [self.raw_dataset[i] for i in new_orders]
-        orders = [0] * len(new_orders)
-        for i, o in enumerate(new_orders):
-            orders[o] = i
-
         start_id = 0
         self.batch_indices = []
         while start_id < n_inputs:
@@ -226,7 +222,7 @@ class Batcher(BatcherBase):
                 while end_id < n_inputs and len(sorted_raw_dataset[end_id]) == len(sorted_raw_dataset[start_id]):
                     end_id += 1
 
-            one_batch_indices = [orders[o] for o in range(start_id, end_id)]
+            one_batch_indices = [new_orders[o] for o in range(start_id, end_id)]
             if len(one_batch_indices) > 0:
                 self.batch_indices.append(one_batch_indices)
             start_id = end_id

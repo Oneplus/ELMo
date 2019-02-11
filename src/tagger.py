@@ -201,7 +201,6 @@ def eval_model(model: torch.nn.Module,
         else:
             print('{0} ||| {1}'.format(' '.join(words), ' '.join(result)))
     fpo.close()
-
     model.train()
     p = subprocess.Popen([args.script, gold_path, path], stdout=subprocess.PIPE)
     p.wait()
@@ -249,7 +248,7 @@ def train_model(epoch: int,
             logging_str = "| epoch {:3d} | step {:>6d} | lr {:.3g} | " \
                           "ms/batch {:5.2f} | loss {:.4f} |".format(epoch, cnt, optimizer.param_groups[0]['lr'],
                                                                     1000 * (time.time() - start_time) / opt.report_steps,
-                                                                    1.0 * loss.item() / n_tags)
+                                                                    total_loss / total_tag)
 
             logger.info(logging_str)
             start_time = time.time()
@@ -257,7 +256,7 @@ def train_model(epoch: int,
         if cnt % opt.eval_steps == 0:
             valid_result = eval_model(model, valid_batch, ix2label, opt, opt.gold_valid_path)
             logging_str = "| epoch {:3d} | step {:>6d} | lr {:.3g} | loss    {:.4f} | dev  {:.4f} |".format(
-                epoch, cnt, optimizer.param_groups[0]['lr'], float(total_loss) / total_tag, valid_result)
+                epoch, cnt, optimizer.param_groups[0]['lr'], total_loss / total_tag, valid_result)
 
             if valid_result > best_valid:
                 logging_str = logging_str + ' NEW |'
@@ -268,7 +267,7 @@ def train_model(epoch: int,
                 witnessed_improved_valid_result = True
                 torch.save(model.state_dict(), os.path.join(opt.model, 'model.pkl'))
                 best_valid = valid_result
-                if test is not None:
+                if test_batch is not None:
                     test_result = eval_model(model, test_batch, ix2label, opt, opt.gold_test_path)
                     logger.info("| epoch {:3d} | step {:>6d} | lr {:.3g} |                | test {:.4f} |".format(
                         epoch, cnt, optimizer.param_groups[0]['lr'], test_result))

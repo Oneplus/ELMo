@@ -90,15 +90,18 @@ def eval_model(model: Model,
     model.eval()
     if model.conf['classifier']['name'].lower() in ('window_sampled_cnn_softmax', 'window_sampled_softmax'):
         model.classify_layer.update_embedding_matrix()
-    total_loss, total_tag = 0.0, 0
-    for word_inputs, char_inputs, lengths, text, targets in valid_batch.get():
-        loss_forward, loss_backward = model.forward(word_inputs, char_inputs, lengths, targets)
-        total_loss += (loss_forward.item() + loss_backward.item()) / 2.
-        n_tags = lengths.sum().item()
-        total_tag += n_tags
 
+    total_forward_loss, total_backward_loss, total_tag = 0.0, 0.0, 0.0
+    for word_inputs, char_inputs, lengths, text, targets in valid_batch.get():
+        forward_loss, backward_loss = model.forward(word_inputs, char_inputs, lengths, targets)
+        total_forward_loss += forward_loss.item()
+        total_backward_loss += backward_loss.item()
+        total_tag += lengths.sum().item()
+
+    total_loss = (total_forward_loss + total_backward_loss) * 0.5
     model.train()
-    return np.exp(total_loss / total_tag)
+    return np.exp(total_loss / total_tag), np.exp(total_forward_loss / total_tag),\
+           np.exp(total_backward_loss / total_tag)
 
 
 def train_model(epoch: int,
@@ -112,7 +115,7 @@ def train_model(epoch: int,
                 best_train: float, best_valid: float, test_ppl: float):
     model.train()
 
-    total_loss, total_tag = 0., 0.
+    total_loss, total_fwd_loss, total_bwd_loss, total_tag = 0., 0., 0., 0.
     step = 0
     start_time = time.time()
 
@@ -122,19 +125,21 @@ def train_model(epoch: int,
     for word_inputs, char_inputs, lengths, texts, targets in train_batch.get():
         model.zero_grad()
         forward_loss, backward_loss = model.forward(word_inputs, char_inputs, lengths, targets)
-
-        loss = (forward_loss + backward_loss) / 2.0
-        total_loss += loss.item()
+        loss = 0.5 * (forward_loss + backward_loss)
         n_tags = lengths.sum().item()
+
+        total_fwd_loss += forward_loss.item()
+        total_bwd_loss += backward_loss.item()
+        total_loss += loss.item()
         total_tag += n_tags
 
-        if conf['optimizer']['fp16']:
+        if conf['optimizer'].get('fp16', False):
             optimizer.backward(loss)
         else:
             loss.backward()
 
         if 'clip_grad' in conf['optimizer']:
-            if conf['optimizer']['fp16']:
+            if conf['optimizer'].get('fp16', False):
                 optimizer.clip_master_grads(conf['optimizer']['clip_grad'])
             else:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), conf['optimizer']['clip_grad'])
@@ -147,17 +152,21 @@ def train_model(epoch: int,
             optimizer.param_groups[0]['lr'] = curr_lr
 
         if step % opt.report_steps == 0:
-            log_str = "| epoch {:3d} | step {:>6d} | lr {:.3g} | ms/batch {:5.2f} | ppl {:>4.2f} |".format(
-                epoch, step, optimizer.param_groups[0]['lr'],
-                1000 * (time.time() - start_time) / opt.report_steps,
-                np.exp(1.0 * loss.item() / n_tags))
+            train_ppl, train_fwd_ppl, train_bwd_ppl = [np.exp(loss / total_tag)
+                                                       for loss in (total_loss, total_fwd_loss, total_bwd_loss)]
+            log_str = "| epoch {:3d} | step {:>6d} | lr {:.3g} | ms/batch {:5.2f} | ppl {:.2f} ({:.2f} " \
+                      "{:.2f}) |".format(epoch, step, optimizer.param_groups[0]['lr'],
+                                         1000 * (time.time() - start_time) / opt.report_steps,
+                                         train_ppl, train_fwd_ppl, train_bwd_ppl)
             logger.info(log_str)
             start_time = time.time()
 
         if step % opt.eval_steps == 0 or step % train_batch.num_batches() == 0:
-            train_ppl = np.exp(total_loss / total_tag)
-            log_str = "| epoch {:3d} | step {:>6d} | lr {:.3g} |      ppl {:>4.2f} |".format(
-                epoch, step, optimizer.param_groups[0]['lr'], train_ppl)
+            train_ppl, train_fwd_ppl, train_bwd_ppl = [np.exp(loss / total_tag)
+                                                       for loss in (total_loss, total_fwd_loss, total_bwd_loss)]
+            log_str = "| epoch {:3d} | step {:>6d} | lr {:.3g} |      ppl {:.2f} ({:.2f} {:.2f}) |".format(
+                epoch, step, optimizer.param_groups[0]['lr'],
+                train_ppl, train_fwd_ppl, train_bwd_ppl)
 
             if valid_batch is None:
                 if train_ppl < best_train:
@@ -171,9 +180,9 @@ def train_model(epoch: int,
                 logger.info(log_str)
                 if train_ppl < best_train:
                     best_train = train_ppl
-                valid_ppl = eval_model(model, valid_batch)
-                log_str = "| epoch {:3d} | step {:>6d} | lr {:.3g} |  dev ppl {:>4.2f} |".format(
-                    epoch, step, optimizer.param_groups[0]['lr'], valid_ppl)
+                valid_ppl, valid_fwd_ppl, valid_bwd_ppl = eval_model(model, valid_batch)
+                log_str = "| epoch {:3d} | step {:>6d} | lr {:.3g} |  dev ppl {:.2f} ({:.2f} {:.2f}) |".format(
+                    epoch, step, optimizer.param_groups[0]['lr'], valid_ppl, valid_fwd_ppl, valid_bwd_ppl)
 
                 if valid_ppl < best_valid:
                     improved = True
@@ -183,9 +192,10 @@ def train_model(epoch: int,
                     logger.info(log_str)
 
                     if test_batch is not None:
-                        test_ppl = eval_model(model, test_batch)
-                        logger.info("| epoch {:3d} | step {:>6d} | lr {:.3g} | test ppl {:>4.2f} |".format(
-                            epoch, step, optimizer.param_groups[0]['lr'], test_ppl))
+                        test_ppl, test_fwd_ppl, test_bwd_ppl = eval_model(model, test_batch)
+                        log_str = "| epoch {:3d} | step {:>6d} | lr {:.3g} | test ppl {:.2f} ({:.2f} {:.2f}) |".format(
+                            epoch, step, optimizer.param_groups[0]['lr'], test_ppl, test_fwd_ppl, test_bwd_ppl)
+                        logger.info(log_str)
                 else:
                     logger.info(log_str)
     return best_train, best_valid, test_ppl, improved
@@ -204,6 +214,7 @@ def train():
     cmd.add_argument("--batch_size", "--batch", type=int, default=32, help='the batch size.')
     cmd.add_argument("--max_epoch", type=int, default=100, help='the maximum number of iteration.')
     cmd.add_argument('--max_sent_len', type=int, default=20, help='maximum sentence length.')
+    cmd.add_argument('--bucket', action='store_true', default=False, help='do bucket batching.')
     cmd.add_argument('--save_classify_layer', default=False, action='store_true',
                      help="whether to save the classify layer")
     cmd.add_argument('--valid_size', type=int, default=0, help="size of validation dataset when there's no valid.")
@@ -295,7 +306,11 @@ def train():
         char_batch = None
 
     # Create training batch
-    training_batcher = BucketBatcher(raw_training_data, word_batch, char_batch, vocab_batch, opt.batch_size)
+    if opt.bucket:
+        training_batcher = BucketBatcher(raw_training_data, word_batch, char_batch, vocab_batch, opt.batch_size)
+    else:
+        training_batcher = Batcher(raw_training_data, word_batch, char_batch, vocab_batch, opt.batch_size,
+                                   sorting=True, shuffle=True)
 
     # Set up evaluation steps.
     if opt.eval_steps is None:

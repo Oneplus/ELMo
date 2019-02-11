@@ -3,9 +3,9 @@ from __future__ import unicode_literals
 import torch
 import numpy as np
 from allennlp.modules.highway import Highway
-from allennlp.modules.seq2seq_encoders.bidirectional_transformer_encoder import PositionalEncoding
-from allennlp.modules.seq2seq_encoders.bidirectional_transformer_encoder import PositionwiseFeedForward
-from allennlp.modules.seq2seq_encoders.bidirectional_transformer_encoder import SublayerConnection
+from allennlp.modules.seq2seq_encoders.bidirectional_language_model_transformer import PositionalEncoding
+from allennlp.modules.seq2seq_encoders.bidirectional_language_model_transformer import PositionwiseFeedForward
+from allennlp.modules.seq2seq_encoders.bidirectional_language_model_transformer import SublayerConnection
 
 
 class Bengio03HighwayBiLm(torch.nn.Module):

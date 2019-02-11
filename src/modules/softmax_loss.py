@@ -7,6 +7,7 @@ class SoftmaxLoss(torch.nn.Module):
         super(SoftmaxLoss, self).__init__()
         self.projection = torch.nn.Linear(input_dim, n_class)
         self.criterion = torch.nn.CrossEntropyLoss(ignore_index=pad_id, size_average=False)
+        self.reset_parameters()
 
     def reset_parameters(self):
         torch.nn.init.xavier_uniform_(self.projection)

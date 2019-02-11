@@ -1,8 +1,8 @@
 import torch
 import numpy as np
 from allennlp.modules.highway import Highway
-from allennlp.modules.seq2seq_encoders.bidirectional_transformer_encoder import PositionalEncoding
-from allennlp.modules.seq2seq_encoders.bidirectional_transformer_encoder import MultiHeadedAttention
+from allennlp.modules.seq2seq_encoders.bidirectional_language_model_transformer import PositionalEncoding
+from allennlp.modules.seq2seq_encoders.bidirectional_language_model_transformer import MultiHeadedAttention
 
 
 def local_mask(size, width, device, left_to_right=True):

@@ -156,7 +156,7 @@ def train_model(epoch: int,
 
         if step % opt.eval_steps == 0 or step % train_batch.num_batches() == 0:
             train_ppl = np.exp(total_loss / total_tag)
-            log_str = "| epoch {:3d} | step {:>6d} | lr {:.3g} |     ppl {:>4.2f} |".format(
+            log_str = "| epoch {:3d} | step {:>6d} | lr {:.3g} |      ppl {:>4.2f} |".format(
                 epoch, step, optimizer.param_groups[0]['lr'], train_ppl)
 
             if valid_batch is None:
@@ -272,7 +272,7 @@ def train():
         raw_test_data = None
 
     # Initialized vocab_batch
-    vocab_batch = VocabBatch(conf['classifier'].get('vocab_cased', False),
+    vocab_batch = VocabBatch(not conf['classifier'].get('vocab_cased', False),
                              conf['classifier'].get('vocab_digit_normalized', False),
                              use_cuda)
     vocab_batch.create_dict_from_file(opt.vocab_path)
@@ -427,7 +427,7 @@ def test():
     with open(args2.config_path, 'r') as fin:
         conf = json.load(fin)
 
-    vocab_batch = VocabBatch(conf['classifier'].get('vocab_cased', False),
+    vocab_batch = VocabBatch(not conf['classifier'].get('vocab_cased', False),
                              conf['classifier'].get('vocab_digit_normalized', False),
                              use_cuda)
     with codecs.open(os.path.join(args.model, 'vocab.dic'), 'r', encoding='utf-8') as fpi:

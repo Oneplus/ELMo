@@ -56,11 +56,11 @@ class Bengio03HighwayBiLm(torch.nn.Module):
 
     def reset_parameters(self):
         for layer_index in range(self.n_layers):
-            torch.nn.init.xavier_uniform_(self.forward_blocks[layer_index].weight)
-            torch.nn.init.xavier_uniform_(self.backward_blocks[layer_index].weight)
+            torch.nn.init.xavier_uniform_(self.forward_projects[layer_index].weight)
+            torch.nn.init.xavier_uniform_(self.backward_projects[layer_index].weight)
 
-            self.forward_blocks[layer_index].bias.fill_(0.)
-            self.backward_blocks[layer_index].bias.fill_(0.)
+            torch.nn.init.constant_(self.forward_projects[layer_index].bias, 0.)
+            torch.nn.init.constant_(self.backward_projects[layer_index].bias, 0.)
 
     def forward(self, inputs: torch.Tensor, mask: torch.Tensor):
         batch_size, sequence_len, dim = inputs.size()

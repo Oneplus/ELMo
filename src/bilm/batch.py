@@ -47,7 +47,7 @@ class VocabBatch(object):
                 words = [self.digit_regex.sub('0', word) for word in words]
 
             for j, word in enumerate(words):
-                forward_batch[i, j] = self.mapping.get(words[j + 1] if j + 1 < len(words) else '<eos>', 0)
+                forward_batch[i, j] = self.mapping.get((words[j + 1] if j + 1 < len(words) else '<eos>'), 0)
                 backward_batch[i, j] = self.mapping.get((words[j - 1] if j > 0 else '<bos>'), 0)
 
         if self.use_cuda:

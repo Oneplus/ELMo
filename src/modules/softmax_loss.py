@@ -10,7 +10,7 @@ class SoftmaxLoss(torch.nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self):
-        torch.nn.init.xavier_uniform_(self.projection)
+        torch.nn.init.xavier_uniform_(self.projection.weight)
         torch.nn.init.constant_(self.projection.bias, 0.)
 
     def forward(self, embeddings: torch.Tensor, targets: torch.Tensor):

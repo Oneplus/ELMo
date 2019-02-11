@@ -10,7 +10,7 @@ from .lbl import LBLHighwayBiLm, LBLHighwayBiLmV2, LBLResNetBiLm
 from .self_attn import SelfAttentiveLBLBiLM
 from allennlp.modules.elmo_lstm import ElmoLstm
 from allennlp.modules.input_variational_dropout import InputVariationalDropout
-from allennlp.nn.util import get_mask_from_sequence_lengths
+from allennlp.nn.util import get_mask_from_sequence_lengths, remove_sentence_boundaries
 from modules.embeddings import Embeddings
 
 
@@ -49,12 +49,14 @@ class BiLMBase(torch.nn.Module):
         else:
             raise ValueError('Unknown token embedder name: {}'.format(token_embedder_name))
 
-        self.add_sentence_boundary = c['add_sentence_boundary']
+        self.add_sentence_boundary = c.get('add_sentence_boundary', False)
+        self.add_sentence_boundary_ids = c.get('add_sentence_boundary_ids', False)
+        assert not (self.add_sentence_boundary and self.add_sentence_boundary_ids)
+
         if self.add_sentence_boundary:
             dim = self.token_embedder.get_output_dim()
-            scale = 1. / math.sqrt(dim)
-            self.bos_embeddings = torch.nn.Parameter(torch.randn(dim) * scale)
-            self.eos_embeddings = torch.nn.Parameter(torch.randn(dim) * scale)
+            self.bos_embeddings = torch.nn.Parameter(torch.randn(dim) / math.sqrt(dim))
+            self.eos_embeddings = torch.nn.Parameter(torch.randn(dim) / math.sqrt(dim))
 
         c = conf['encoder']
         encoder_name = c['name'].lower()
@@ -131,6 +133,9 @@ class BiLMBase(torch.nn.Module):
             encoded_tokens = self.encoder(embedded_tokens_with_boundary,
                                           mask_with_boundary)
             return encoded_tokens[:, :, 1:-1, :], embedded_tokens, mask
+        elif self.add_sentence_boundary_ids:
+            encoded_tokens = self.encoder(embedded_tokens, mask)
+            return self._remove_sentence_boundaries(encoded_tokens, embedded_tokens, mask)
         else:
             encoded_tokens = self.encoder(embedded_tokens, mask)
             return encoded_tokens, embedded_tokens, mask
@@ -153,6 +158,30 @@ class BiLMBase(torch.nn.Module):
             new_mask[i, j + 1] = 1
 
         return tensor_with_boundary_embeddings, new_mask
+
+    def _remove_sentence_boundaries(self, tensor1: torch.Tensor,
+                                    tensor2: torch.Tensor,
+                                    mask: torch.Tensor):
+        sequence_lengths = mask.sum(dim=1).detach().cpu().numpy()
+
+        tensor1_shape = list(tensor1.data.shape)
+        new_shape1 = list(tensor1_shape)
+        new_shape1[2] = tensor1_shape[2] - 2
+
+        tensor2_shape = list(tensor2.data.shape)
+        new_shape2 = list(tensor2_shape)
+        new_shape2[1] = tensor2_shape[1] - 2
+
+        tensor1_without_boundary_tokens = tensor1.new_zeros(*new_shape1)
+        tensor2_without_boundary_tokens = tensor2.new_zeros(*new_shape2)
+        new_mask = tensor1.new_zeros((new_shape2[0], new_shape2[1]), dtype=torch.long)
+        for i, j in enumerate(sequence_lengths):
+            if j > 2:
+                tensor1_without_boundary_tokens[:, i, :(j - 2), :] = tensor1[:, i, 1:(j - 1), :]
+                tensor2_without_boundary_tokens[i, :(j - 2), :] = tensor2[i, 1:(j - 1), :]
+                new_mask[i, :(j - 2)] = 1
+
+        return tensor1_without_boundary_tokens, tensor2_without_boundary_tokens, new_mask
 
     def forward(self, *input):
         raise NotImplementedError()

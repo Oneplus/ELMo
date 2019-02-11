@@ -283,24 +283,28 @@ def train():
         raw_test_data = None
 
     # Initialized vocab_batch
-    vocab_batch = VocabBatch(not conf['classifier'].get('vocab_cased', False),
-                             conf['classifier'].get('vocab_digit_normalized', False),
-                             use_cuda)
+    vocab_batch = VocabBatch(lower=not conf['classifier'].get('vocab_cased', False),
+                             normalize_digits=conf['classifier'].get('vocab_digit_normalized', False),
+                             use_cuda=use_cuda)
     vocab_batch.create_dict_from_file(opt.vocab_path)
 
     # Word
     if c.get('word_dim', 0) > 0:
-        word_batch = WordBatch(c.get('word_min_cut', 0), '<oov>', '<pad>', not c.get('word_cased', True), use_cuda)
+        word_batch = WordBatch(min_cut=c.get('word_min_cut', 0),
+                               lower=not c.get('word_cased', True),
+                               add_sentence_boundary=c.get('add_sentence_boundary_ids', False),
+                               use_cuda=use_cuda)
     else:
         word_batch = None
 
     # Character
     if c.get('char_dim', 0) > 0:
-        if c['name'] == 'cnn':
-            char_batch = CharacterBatch(max([w for w, _ in c['filters']]),
-                                        '<oov>', '<pad>', '<eow>', not c.get('char_cased', True), use_cuda)
-        else:
-            char_batch = CharacterBatch(1, '<oov>', '<pad>', '<eow>', not c.get('char_cased', True), use_cuda)
+        min_char = max([w for w, _ in c['filters']]) if c['name'] == 'cnn' else 1
+        char_batch = CharacterBatch(min_char=min_char,
+                                    lower=not c.get('char_cased', True),
+                                    add_sentence_boundary=c.get('add_sentence_boundary_ids', False),
+                                    add_word_boundary=c.get('add_word_boundary_ids', False),
+                                    use_cuda=use_cuda)
         char_batch.create_dict_from_dataset(raw_training_data)
     else:
         char_batch = None
@@ -310,7 +314,7 @@ def train():
         training_batcher = BucketBatcher(raw_training_data, word_batch, char_batch, vocab_batch, opt.batch_size)
     else:
         training_batcher = Batcher(raw_training_data, word_batch, char_batch, vocab_batch, opt.batch_size,
-                                   sorting=True, shuffle=True)
+                                   keep_full=False, sorting=True, shuffle=True)
 
     # Set up evaluation steps.
     if opt.eval_steps is None:
@@ -442,9 +446,9 @@ def test():
     with open(args2.config_path, 'r') as fin:
         conf = json.load(fin)
 
-    vocab_batch = VocabBatch(not conf['classifier'].get('vocab_cased', False),
-                             conf['classifier'].get('vocab_digit_normalized', False),
-                             use_cuda)
+    vocab_batch = VocabBatch(lower=not conf['classifier'].get('vocab_cased', False),
+                             normalize_digits=conf['classifier'].get('vocab_digit_normalized', False),
+                             use_cuda=use_cuda)
     with codecs.open(os.path.join(args.model, 'vocab.dic'), 'r', encoding='utf-8') as fpi:
         for line in fpi:
             tokens = line.strip().split('\t')
@@ -455,11 +459,12 @@ def test():
 
     c = conf['token_embedder']
     if c['char_dim'] > 0:
-        if c['name'] == 'cnn':
-            char_batch = CharacterBatch(max([w for w, _ in c['filters']]),
-                                        '<oov>', '<pad>', '<eow>', not c.get('char_cased', True), use_cuda)
-        else:
-            char_batch = CharacterBatch(1, '<oov>', '<pad>', '<eow>', not c.get('char_cased', True), use_cuda)
+        min_char = max([w for w, _ in c['filters']]) if c['name'] == 'cnn' else 1
+        char_batch = CharacterBatch(min_char=min_char,
+                                    lower=not c.get('char_cased', True),
+                                    add_sentence_boundary=c.get('add_sentence_boundary_ids', False),
+                                    add_word_boundary=c.get('add_word_boundary_ids', False),
+                                    use_cuda=use_cuda)
         with codecs.open(os.path.join(args.model, 'char.dic'), 'r', encoding='utf-8') as fpi:
             for line in fpi:
                 tokens = line.strip().split('\t')
@@ -471,7 +476,10 @@ def test():
         char_batch = None
 
     if c['word_dim'] > 0:
-        word_batch = WordBatch(c.get('word_min_cut', 0), '<oov>', '<pad>', not c.get('word_cased', True), use_cuda)
+        word_batch = WordBatch(min_cut=c.get('word_min_cut', 0),
+                               lower=not c.get('word_cased', True),
+                               add_sentence_boundary=c.get('add_sentence_boundary_ids', False),
+                               use_cuda=use_cuda)
         with codecs.open(os.path.join(args.model, 'word.dic'), 'r', encoding='utf-8') as fpi:
             for line in fpi:
                 tokens = line.strip().split('\t')

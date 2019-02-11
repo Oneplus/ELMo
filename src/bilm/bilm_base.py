@@ -10,7 +10,7 @@ from .lbl import LBLHighwayBiLm, LBLHighwayBiLmV2, LBLResNetBiLm
 from .self_attn import SelfAttentiveLBLBiLM
 from allennlp.modules.elmo_lstm import ElmoLstm
 from allennlp.modules.input_variational_dropout import InputVariationalDropout
-from allennlp.nn.util import get_mask_from_sequence_lengths, remove_sentence_boundaries
+from allennlp.nn.util import get_mask_from_sequence_lengths
 from modules.embeddings import Embeddings
 
 
@@ -183,5 +183,5 @@ class BiLMBase(torch.nn.Module):
 
         return tensor1_without_boundary_tokens, tensor2_without_boundary_tokens, new_mask
 
-    def forward(self, *input):
+    def forward(self, *inputs):
         raise NotImplementedError()

@@ -4,8 +4,7 @@ from typing import Tuple, List
 import torch
 from modules.embeddings import Embeddings
 from allennlp.modules.highway import Highway
-from allennlp.modules.seq2seq_encoders.multi_head_self_attention import MultiHeadSelfAttention
-from allennlp.nn.util import get_mask_from_sequence_lengths
+from allennlp.nn.util import get_mask_from_sequence_lengths, masked_softmax
 from allennlp.nn.activations import Activation
 
 
@@ -39,11 +38,7 @@ class LstmTokenEmbedder(TokenEmbedderBase):
             self.char_encoder = torch.nn.LSTM(char_embedder.n_d, char_embedder.n_d, num_layers=1,
                                               bidirectional=False,
                                               batch_first=True, dropout=dropout)
-            self.char_attention = MultiHeadSelfAttention(num_heads=1,
-                                                         input_dim=char_embedder.n_d,
-                                                         attention_dim=char_embedder.n_d,
-                                                         values_dim=char_embedder.n_d,
-                                                         attention_dropout_prob=dropout)
+            self.char_attention = torch.nn.Linear(char_embedder.n_d, 1, bias=False)
 
         self.projection = torch.nn.Linear(emb_dim, output_dim, bias=True)
         self.reset_parameters()
@@ -72,8 +67,9 @@ class LstmTokenEmbedder(TokenEmbedderBase):
 
             embeded_char_inputs = self.char_embedder(char_inputs)
             encoded_char_outputs, _ = self.char_encoder(embeded_char_inputs)
-            encoded_char_outputs = self.char_attention(encoded_char_outputs, char_mask)
-            encoded_char_outputs = encoded_char_outputs.sum(dim=1).view(batch_size, seq_len, -1)
+            char_attentions = masked_softmax(self.char_attention(encoded_char_outputs).squeeze(-1), char_mask, dim=-1)
+            encoded_char_outputs = char_attentions.unsqueeze(-1).mul(encoded_char_outputs).sum(dim=1)
+            encoded_char_outputs = encoded_char_outputs.view(batch_size, seq_len, -1)
             embs.append(encoded_char_outputs)
 
         token_embedding = torch.cat(embs, dim=2)

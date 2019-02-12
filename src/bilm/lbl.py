@@ -130,6 +130,9 @@ class LBLHighwayBiLmV2(torch.nn.Module):
         backward_output_sequence = inputs
 
         for layer_index in range(self.n_layers):
+            forward_cache = forward_output_sequence
+            backward_cache = backward_output_sequence
+
             if self.use_position:
                 forward_output_sequence = self.position(forward_output_sequence)
                 backward_output_sequence = self.position(backward_output_sequence)
@@ -145,16 +148,15 @@ class LBLHighwayBiLmV2(torch.nn.Module):
                 end = min(sequence_len, current + self.width + 1)
                 length = end - current
                 backward_mask[current: end, current] = self.backward_weights[layer_index][: length]
-            # print('forward', forward_mask != 0)
-            # print('backward', backward_mask != 0)
-            forward_mask = forward_mask.unsqueeze(0).unsqueeze(-1)
-            backward_mask = backward_mask.unsqueeze(0).unsqueeze(-1)
-
-            forward_output_sequence = (forward_mask * forward_output_sequence.unsqueeze(-2)).sum(1)
-            backward_output_sequence = (backward_mask * backward_output_sequence.unsqueeze(-2)).sum(1)
+            forward_output_sequence = forward_output_sequence.permute(0, 2, 1).matmul(forward_mask).permute(0, 2, 1)
+            backward_output_sequence = backward_output_sequence.permute(0, 2, 1).matmul(backward_mask).permute(0, 2, 1)
 
             forward_output_sequence = self.forward_blocks[layer_index](forward_output_sequence)
             backward_output_sequence = self.backward_blocks[layer_index](backward_output_sequence)
+
+            if layer_index != 0:
+                forward_output_sequence += forward_cache
+                backward_output_sequence += backward_cache
 
             sequence_outputs.append(torch.cat([forward_output_sequence, backward_output_sequence], dim=-1))
 

@@ -68,7 +68,7 @@ class LstmTokenEmbedder(TokenEmbedderBase):
             embeded_char_inputs = self.char_embedder(char_inputs)
             encoded_char_outputs, _ = self.char_encoder(embeded_char_inputs)
             char_attentions = masked_softmax(self.char_attention(encoded_char_outputs).squeeze(-1), char_mask, dim=-1)
-            encoded_char_outputs = char_attentions.unsqueeze(-1).mul(encoded_char_outputs).sum(dim=1)
+            encoded_char_outputs = torch.bmm(encoded_char_outputs.permute(0, 2, 1), char_attentions.unsqueeze(-1))
             encoded_char_outputs = encoded_char_outputs.view(batch_size, seq_len, -1)
             embs.append(encoded_char_outputs)
 

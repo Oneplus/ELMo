@@ -5,7 +5,7 @@ import math
 from .batch import WordBatch, CharacterBatch
 from .token_embedder import ConvTokenEmbedder, LstmTokenEmbedder
 from .lstm import LstmbiLm
-from .bengio03 import Bengio03HighwayBiLm, Bengio03ResNetBiLm
+from .bengio03 import Bengio03HighwayBiLmV2, Bengio03HighwayBiLm, Bengio03ResNetBiLm
 from .lbl import LBLHighwayBiLm, LBLHighwayBiLmV2, LBLResNetBiLm
 from .self_attn import SelfAttentiveLBLBiLM
 from allennlp.modules.elmo_lstm import ElmoLstm
@@ -82,6 +82,14 @@ class BiLMBase(torch.nn.Module):
                                                n_highway=c['n_highway'],
                                                use_position=c.get('position', False),
                                                dropout=conf['dropout'])
+        elif encoder_name == 'bengio03highway_v2':
+            self.encoder = Bengio03HighwayBiLmV2(width=c['width'],
+                                                 input_size=c['projection_dim'],
+                                                 hidden_size=c['projection_dim'],
+                                                 n_layers=c['n_layers'],
+                                                 n_highway=c['n_highway'],
+                                                 use_position=c.get('position', False),
+                                                 dropout=conf['dropout'])
         elif encoder_name == 'bengio03resnet':
             self.encoder = Bengio03ResNetBiLm(width=c['width'],
                                               input_size=c['projection_dim'],
@@ -96,6 +104,13 @@ class BiLMBase(torch.nn.Module):
                                           n_layers=c['n_layers'],
                                           n_highway=c['n_highway'],
                                           use_position=c.get('position', False))
+        elif encoder_name == 'lblhighway_v2':
+            self.encoder = LBLHighwayBiLmV2(width=c['width'],
+                                            input_size=c['projection_dim'],
+                                            hidden_size=c['projection_dim'],
+                                            n_layers=c['n_layers'],
+                                            n_highway=c['n_highway'],
+                                            use_position=c.get('position', False))
         elif encoder_name == 'lblresnet':
             self.encoder = LBLResNetBiLm(width=c['width'],
                                          input_size=c['projection_dim'],

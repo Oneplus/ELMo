@@ -92,11 +92,16 @@ def eval_model(model: Model,
         model.classify_layer.update_embedding_matrix()
 
     total_forward_loss, total_backward_loss, total_tag = 0.0, 0.0, 0.0
+    add_sentence_boundary_ids = model.conf['token_embedder'].get('add_sentence_boundary_ids', False)
     for word_inputs, char_inputs, lengths, text, targets in valid_batch.get():
         forward_loss, backward_loss = model.forward(word_inputs, char_inputs, lengths, targets)
         total_forward_loss += forward_loss.item()
         total_backward_loss += backward_loss.item()
-        total_tag += lengths.sum().item()
+        n_tags = lengths.sum().item()
+        # It's because length counts sentence boundary, but loss doesn't
+        if add_sentence_boundary_ids:
+            n_tags -= (lengths.size(0) * 2)
+        total_tag += n_tags
 
     total_loss = (total_forward_loss + total_backward_loss) * 0.5
     model.train()
@@ -121,12 +126,16 @@ def train_model(epoch: int,
 
     improved = False
     warmup_step = conf['optimizer'].get('warmup_step', None)
+    add_sentence_boundary_ids = conf['token_embedder'].get('add_sentence_boundary_ids', False)
 
     for word_inputs, char_inputs, lengths, texts, targets in train_batch.get():
         model.zero_grad()
         forward_loss, backward_loss = model.forward(word_inputs, char_inputs, lengths, targets)
         loss = 0.5 * (forward_loss + backward_loss)
         n_tags = lengths.sum().item()
+        # It's because length counts sentence boundary, but loss doesn't
+        if add_sentence_boundary_ids:
+            n_tags -= (lengths.size(0) * 2)
 
         total_fwd_loss += forward_loss.item()
         total_bwd_loss += backward_loss.item()

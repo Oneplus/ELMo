@@ -118,7 +118,7 @@ def test_main():
 
     # create test batches from the input data.
     test_batcher = Batcher(raw_test_data, word_batch, char_batch, None,
-                           args.batch_size, sorting=False, shuffle=False,
+                           args.batch_size, sorting=True, shuffle=False, keep_full=True,
                            original_raw_dataset=original_raw_test_data)
 
     # configure the model to evaluation mode.
@@ -133,6 +133,7 @@ def test_main():
         assert len(output_layers) == 1
 
     handlers = {}
+    add_sentence_boundary_ids = conf['token_embedder'].get('add_sentence_boundary_ids', False)
     for output_format in output_formats:
         if output_format not in ('hdf5', 'txt'):
             print('Unknown output_format: {0}'.format(output_format))
@@ -161,7 +162,10 @@ def test_main():
                 continue
             sent_set.add(sent)
 
-            data = output[:, i, :lengths[i], :].data
+            if add_sentence_boundary_ids:
+                data = output[:, i, :lengths[i] - 2, :].data
+            else:
+                data = output[:, i, :lengths[i], :].data
             if use_cuda:
                 data = data.cpu()
             data = data.numpy()

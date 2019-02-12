@@ -70,8 +70,12 @@ def test_main():
 
     c = conf['token_embedder']
     if c['char_dim'] > 0:
-        char_batch = CharacterBatch(max([w for w, _ in c['filters']]),
-                                    '<oov>', '<pad>', '<eow>', not c.get('char_cased', True), use_cuda)
+        min_char = max([w for w, _ in c['filters']]) if c['name'] == 'cnn' else 1
+        char_batch = CharacterBatch(min_char=min_char,
+                                    lower=not c.get('char_cased', True),
+                                    add_sentence_boundary=c.get('add_sentence_boundary_ids', False),
+                                    add_word_boundary=c.get('add_word_boundary_ids', False),
+                                    use_cuda=use_cuda)
         with codecs.open(os.path.join(args.model, 'char.dic'), 'r', encoding='utf-8') as fpi:
             for line in fpi:
                 tokens = line.strip().split('\t')
@@ -83,8 +87,10 @@ def test_main():
         char_batch = None
 
     if c['word_dim'] > 0:
-        word_batch = WordBatch(c.get('word_min_cut', 0), '<oov>', '<pad>',
-                               not c.get('word_cased', True), use_cuda)
+        word_batch = WordBatch(min_cut=c.get('word_min_cut', 0),
+                               lower=not c.get('word_cased', True),
+                               add_sentence_boundary=c.get('add_sentence_boundary_ids', False),
+                               use_cuda=use_cuda)
         with codecs.open(os.path.join(args.model, 'word.dic'), 'r', encoding='utf-8') as fpi:
             for line in fpi:
                 tokens = line.strip().split('\t')

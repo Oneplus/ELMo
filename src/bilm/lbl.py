@@ -76,7 +76,7 @@ class LBLHighwayBiLm(torch.nn.Module):
                 end = start + self.width
                 forward_input = padded_forward_output_sequence.narrow(1, start, self.width + 1)
                 forward_output = forward_input.transpose(-2, -1).matmul(self.forward_weights[layer_index])
-                forward_output = self.forward_blocks[layer_index](self.dropout(orward_output))
+                forward_output = self.forward_blocks[layer_index](self.dropout(forward_output))
 
                 backward_input = padded_backward_output_sequence.narrow(1, end, self.width + 1)
                 backward_output = backward_input.transpose(-2, -1).matmul(self.backward_weights[layer_index])

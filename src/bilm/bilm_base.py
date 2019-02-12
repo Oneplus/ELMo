@@ -7,7 +7,7 @@ from .token_embedder import ConvTokenEmbedder, LstmTokenEmbedder
 from .lstm import LstmbiLm
 from .bengio03 import Bengio03HighwayBiLmV2, Bengio03HighwayBiLm, Bengio03ResNetBiLm
 from .lbl import LBLHighwayBiLm, LBLHighwayBiLmV2, LBLResNetBiLm
-from .self_attn import SelfAttentiveLBLBiLM
+from .self_attn import SelfAttentiveLBLBiLM, SelfAttentiveLBLBiLMV2
 from allennlp.modules.elmo_lstm import ElmoLstm
 from allennlp.modules.input_variational_dropout import InputVariationalDropout
 from allennlp.nn.util import get_mask_from_sequence_lengths
@@ -103,14 +103,16 @@ class BiLMBase(torch.nn.Module):
                                           hidden_size=c['projection_dim'],
                                           n_layers=c['n_layers'],
                                           n_highway=c['n_highway'],
-                                          use_position=c.get('position', False))
+                                          use_position=c.get('position', False),
+                                          dropout=conf['dropout'])
         elif encoder_name == 'lblhighway_v2':
             self.encoder = LBLHighwayBiLmV2(width=c['width'],
                                             input_size=c['projection_dim'],
                                             hidden_size=c['projection_dim'],
                                             n_layers=c['n_layers'],
                                             n_highway=c['n_highway'],
-                                            use_position=c.get('position', False))
+                                            use_position=c.get('position', False),
+                                            dropout=conf['dropout'])
         elif encoder_name == 'lblresnet':
             self.encoder = LBLResNetBiLm(width=c['width'],
                                          input_size=c['projection_dim'],
@@ -128,6 +130,16 @@ class BiLMBase(torch.nn.Module):
                                                 use_position=c.get('position', False),
                                                 use_relative_position=c.get('relative_position_weights', False),
                                                 dropout=conf['dropout'])
+        elif encoder_name == 'selfattn_v2':
+            self.encoder = SelfAttentiveLBLBiLMV2(width=c['width'],
+                                                  input_size=c['projection_dim'],
+                                                  hidden_size=c['projection_dim'],
+                                                  n_heads=c['n_heads'],
+                                                  n_layers=c['n_layers'],
+                                                  n_highway=c['n_highway'],
+                                                  use_position=c.get('position', False),
+                                                  use_relative_position=c.get('relative_position_weights', False),
+                                                  dropout=conf['dropout'])
         else:
             raise ValueError('Unknown encoder name: {}'.format(encoder_name))
 

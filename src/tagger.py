@@ -105,6 +105,7 @@ class SeqLabelModel(torch.nn.Module):
                                             hidden_size=conf['input_encoder']['hidden_dim'],
                                             num_layers=conf['input_encoder']['n_layers'],
                                             recurrent_dropout_probability=conf['dropout'],
+                                            layer_dropout_probability=conf['dropout'],
                                             use_highway=conf['input_encoder'].get('use_highway', True))
             self.encoder = PytorchSeq2SeqWrapper(lstm, stateful=False)
             encoded_input_dim = self.encoder.get_output_dim()

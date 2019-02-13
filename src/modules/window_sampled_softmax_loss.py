@@ -72,8 +72,8 @@ class WindowSampledSoftmaxLoss(torch.nn.Module):
             all_ids[i] = negative_sample
             indexing[negative_sample] = i
 
-        for i in range(num_targets):
-            new_targets[i] = indexing[targets[i].item()]
+        for i, target in enumerate(targets.tolist()):
+            new_targets[i] = indexing[target]
 
         all_ids.requires_grad_(False)
         new_targets.requires_grad_(False)
@@ -110,9 +110,8 @@ class WindowSampledSoftmaxLoss(torch.nn.Module):
     def update_negative_samples(self,
                                 targets: List[str]):
         # put all the words in the batch as `words_in_batch`
-        for target in targets:
-            self._negative_samples.append(target)
-            self._negative_samples_counter[target] += 1
+        self._negative_samples.extend(targets)
+        self._negative_samples_counter.update(targets)
 
         while len(self._negative_samples_counter) > self._num_samples:
             target = self._negative_samples[0]

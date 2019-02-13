@@ -32,6 +32,7 @@ from modules.embeddings import Embeddings
 from modules.embeddings import load_embedding_txt
 from allennlp.modules.seq2seq_encoders.pytorch_seq2seq_wrapper import PytorchSeq2SeqWrapper
 from allennlp.modules.stacked_bidirectional_lstm import StackedBidirectionalLstm
+from allennlp.modules.input_variational_dropout import InputVariationalDropout
 from allennlp.nn.util import get_mask_from_sequence_lengths
 from allennlp.training.optimizers import DenseSparseAdam
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
@@ -94,6 +95,7 @@ class SeqLabelModel(torch.nn.Module):
         self.n_class = n_class
         self.use_cuda = use_cuda
         self.input_dropout = torch.nn.Dropout2d(p=conf["dropout"])
+        self.dropout = InputVariationalDropout(p=conf['dropout'])
 
         input_layers = {}
         for i, c in enumerate(conf['input']):
@@ -194,29 +196,24 @@ class SeqLabelModel(torch.nn.Module):
             input_ = inputs[name]
             embedded_input[name] = fn(input_)
 
-        encoded_input = []
+        encoded_inputs = []
         for encoder_ in self.input_encoders:
             ordered_names = encoder_.get_ordered_names()
             args_ = {name: embedded_input[name] for name in ordered_names}
-            encoded_input.append(self.input_dropout(encoder_(args_)))
+            encoded_inputs.append(self.input_dropout(encoder_(args_)))
 
-        encoded_input = torch.cat(encoded_input, dim=-1)
+        encoded_inputs = torch.cat(encoded_inputs, dim=-1)
 
         lengths = inputs['length']
         mask = get_mask_from_sequence_lengths(lengths, lengths.max())
 
-        encoded_input = self.input_dropout(encoded_input)
-        # input_: (batch_size, seq_len, input_dim)
-
-        encoded_inputs = self.encoder(encoded_input, mask)
+        encoded_inputs = self.encoder(encoded_inputs, mask)
         # encoded_input_: (batch_size, seq_len, dim)
 
-        start_time = time.time()
+        encoded_inputs = self.dropout(encoded_inputs)
 
         output, loss = self.classify_layer.forward(encoded_inputs, targets)
 
-        if not self.training:
-            self.classify_time += time.time() - start_time
         return output, loss
 
 

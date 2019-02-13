@@ -14,6 +14,8 @@ class ConcatenateInputEncoder(InputEncoderBase):
 
     def forward(self, inputs_: Dict[str, torch.Tensor]) -> torch.Tensor:
         output_ = [inputs_[name] for name in self.ordered_names]
+        if len(output_) == 1:
+            return output_[0]
         return torch.cat(output_, dim=-1)
 
     def get_output_dim(self) -> int:

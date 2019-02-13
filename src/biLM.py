@@ -129,14 +129,12 @@ def train_model(epoch: int,
     for word_inputs, char_inputs, lengths, texts, targets in train_batch.get():
         if conf['classifier']['name'].lower() in ('window_sampled_cnn_softmax', 'window_sampled_softmax'):
             negative_sample_targets = []
-            batch_size, seq_len = targets[0].size()
-            for i in range(batch_size):
-                true_length = lengths[i].item() - 2 if add_sentence_boundary_ids else lengths[i].item()
-                negative_sample_targets.append(targets[1][i, 0].item())
-                if true_length > 1:
-                    negative_sample_targets.append(targets[1][i, 1].item())
-                for j in range(true_length):
-                    negative_sample_targets.append(targets[0][i, j].item())
+            vocab = train_batch.vocab_batch
+            mapping = train_batch.vocab_batch.mapping
+            for words in texts:
+                negative_sample_targets.append(mapping.get(vocab.bos))
+                negative_sample_targets.extend([mapping.get(word) for word in words])
+                negative_sample_targets.append(mapping.get(vocab.eos))
             model.classify_layer.update_negative_samples(negative_sample_targets)
 
         model.zero_grad()

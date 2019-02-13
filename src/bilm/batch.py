@@ -11,16 +11,28 @@ from sklearn.cluster import KMeans
 logger = logging.getLogger(__name__)
 
 
-class VocabBatch(object):
+class SpecialTokens(object):
+    oov = '<oov>'
+    pad = '<pad>'
+    bos = '<S>'
+    eos = '</S>'
+    bow = '<W>'
+    eow = '</W>'
+    oov_id = 0
+    pad_id = 1
+
+
+class VocabBatch(SpecialTokens):
     digit_regex = re.compile(r'\d')
 
     def __init__(self, lower: bool,
                  normalize_digits: bool,
                  use_cuda: bool):
+        super(VocabBatch, self).__init__()
         self.use_cuda = use_cuda
         self.lower = lower
         self.normalize_digits = normalize_digits
-        self.mapping = {'<oov>': 0, '<pad>': 1, '<S>': 2, '</S>': 3}
+        self.mapping = {self.oov: self.oov_id, self.pad: self.pad_id, self.bos: 2, self.eos: 3}
 
     def create_dict_from_file(self, filename: str):
         n_entries = 0
@@ -37,8 +49,8 @@ class VocabBatch(object):
 
     def create_one_batch(self, raw_dataset: List[List[str]]):
         batch_size, seq_len = len(raw_dataset), max([len(input_) for input_ in raw_dataset])
-        forward_batch = torch.LongTensor(batch_size, seq_len).fill_(1)
-        backward_batch = torch.LongTensor(batch_size, seq_len).fill_(1)
+        forward_batch = torch.LongTensor(batch_size, seq_len).fill_(self.pad_id)
+        backward_batch = torch.LongTensor(batch_size, seq_len).fill_(self.pad_id)
         for i, raw_data in enumerate(raw_dataset):
             words = raw_data
             if self.lower:
@@ -47,8 +59,8 @@ class VocabBatch(object):
                 words = [self.digit_regex.sub('0', word) for word in words]
 
             for j, word in enumerate(words):
-                forward_batch[i, j] = self.mapping.get((words[j + 1] if j + 1 < len(words) else '<S>'), 0)
-                backward_batch[i, j] = self.mapping.get((words[j - 1] if j > 0 else '</S>'), 0)
+                forward_batch[i, j] = self.mapping.get((words[j + 1] if j + 1 < len(words) else self.eos), self.oov_id)
+                backward_batch[i, j] = self.mapping.get((words[j - 1] if j > 0 else self.bos), self.oov_id)
 
         if self.use_cuda:
             forward_batch = forward_batch.cuda()
@@ -93,16 +105,16 @@ class LengthBatch(InputBatchBase):
         return ret
 
 
-class WordBatch(InputBatchBase):
+class WordBatch(InputBatchBase, SpecialTokens):
+
     def __init__(self, min_cut: int, lower: bool,
                  add_sentence_boundary: bool,
                  use_cuda: bool):
         super(WordBatch, self).__init__(use_cuda)
         self.min_cut = min_cut
-        self.mapping = {'<oov>': 0, '<pad>': 1, '<S>': 2, '</S>': 3}
+        self.mapping = {self.oov: 0, self.pad: 1, self.bos: 2, self.eos: 3}
         self.lower = lower
         self.add_sentence_boundary = add_sentence_boundary
-        self.n_tokens = len(self.mapping)
         logger.info('{0}'.format(self))
         logger.info('+ min_cut: {0}'.format(self.min_cut))
         logger.info('+ to lower: {0}'.format(self.lower))
@@ -111,14 +123,14 @@ class WordBatch(InputBatchBase):
         batch_size, seq_len = len(raw_dataset), max([len(input_) for input_ in raw_dataset])
         if self.add_sentence_boundary:
             seq_len += 2
-        batch = torch.LongTensor(batch_size, seq_len).fill_(1)
+        batch = torch.LongTensor(batch_size, seq_len).fill_(self.pad_id)
         for i, raw_data in enumerate(raw_dataset):
             if self.add_sentence_boundary:
-                raw_data = ['<S>'] + raw_data + ['</S>']
+                raw_data = [self.bos] + raw_data + [self.eos]
             for j, word in enumerate(raw_data):
                 if self.lower:
                     word = word.lower()
-                batch[i, j] = self.mapping.get(word, 0)
+                batch[i, j] = self.mapping.get(word, self.oov_id)
         if self.use_cuda:
             batch = batch.cuda()
         return batch
@@ -142,18 +154,17 @@ class WordBatch(InputBatchBase):
         logger.info('+ current number of entries in mapping is: {0}'.format(len(self.mapping)))
 
 
-class CharacterBatch(InputBatchBase):
+class CharacterBatch(InputBatchBase, SpecialTokens):
     def __init__(self, min_char: int, lower: bool,
                  add_sentence_boundary: bool,
                  add_word_boundary: bool,
                  use_cuda: bool):
         super(CharacterBatch, self).__init__(use_cuda)
         self.min_char = min_char
-        self.mapping = {'<oov>': 0, '<pad>': 1, '<S>': 2, '</S>': 3, '<W>': 4, '</W>': 5}
+        self.mapping = {self.oov: 0, self.pad: 1, self.bos: 2, self.eos: 3, self.bow: 4, self.eow: 5}
         self.lower = lower
         self.add_sentence_boundary = add_sentence_boundary
         self.add_word_boundary = add_word_boundary
-        self.n_tokens = len(self.mapping)
         logger.info('{0}'.format(self))
 
     def create_one_batch(self, raw_dataset: List[List[str]]):
@@ -167,34 +178,34 @@ class CharacterBatch(InputBatchBase):
         if self.add_word_boundary:
             max_char_len += 2
 
-        batch = torch.LongTensor(batch_size, seq_len, max_char_len).fill_(1)
+        batch = torch.LongTensor(batch_size, seq_len, max_char_len).fill_(self.pad_id)
         lengths = torch.LongTensor(batch_size, seq_len).fill_(1)
         for i, raw_data in enumerate(raw_dataset):
             if self.add_sentence_boundary:
-                raw_data = ['<S>'] + raw_data + ['</S>']
+                raw_data = [self.bos] + raw_data + [self.eos]
             for j, word in enumerate(raw_data):
                 if self.lower:
                     word = word.lower()
-                if self.add_sentence_boundary and (word == '<S>' or word == '</S>'):
+                if self.add_sentence_boundary and (word == self.bos or word == self.eos):
                     if self.add_word_boundary:
                         lengths[i, j] = 3
-                        batch[i, j, 0] = self.mapping.get('<W>')
+                        batch[i, j, 0] = self.mapping.get(self.bow)
                         batch[i, j, 1] = self.mapping.get(word)
-                        batch[i, j, 2] = self.mapping.get('</W>')
+                        batch[i, j, 2] = self.mapping.get(self.eow)
                     else:
                         lengths[i, j] = 1
                         batch[i, j, 0] = self.mapping.get(word)
                 else:
                     if self.add_word_boundary:
                         lengths[i, j] = len(word) + 2
-                        batch[i, j, 0] = self.mapping.get('<W>')
+                        batch[i, j, 0] = self.mapping.get(self.bow)
                         for k, key in enumerate(word):
-                            batch[i, j, k + 1] = self.mapping.get(key, 0)
-                        batch[i, j, k + 1] = self.mapping.get('</W>')
+                            batch[i, j, k + 1] = self.mapping.get(key, self.oov_id)
+                        batch[i, j, k + 1] = self.mapping.get(self.eow)
                     else:
                         lengths[i, j] = len(word)
                         for k, key in enumerate(word):
-                            batch[i, j, k] = self.mapping.get(key, 0)
+                            batch[i, j, k] = self.mapping.get(key, self.oov_id)
 
         if self.use_cuda:
             batch = batch.cuda()

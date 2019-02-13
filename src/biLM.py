@@ -46,7 +46,8 @@ class Model(BiLMBase):
             sparse = conf['optimizer']['type'].lower() in ('sgd', 'adam', 'dense_sparse_adam')
             self.classify_layer = SampledSoftmaxLoss(n_class, self.output_dim, c['n_samples'], sparse=sparse, unk_id=0)
         elif classify_layer_name == 'window_sampled_softmax':
-            raise NotImplementedError('window_sampled_softmax is not ready.')
+            sparse = conf['optimizer']['type'].lower() in ('sgd', 'adam', 'dense_sparse_adam')
+            self.classify_layer = WindowSampledSoftmaxLoss(n_class, self.output_dim, c['n_samples'], sparse=sparse)
         else:
             raise ValueError('Unknown classify_layer: {}'.format(classify_layer_name))
 
@@ -88,9 +89,6 @@ class Model(BiLMBase):
 def eval_model(model: Model,
                valid_batch: BatcherBase):
     model.eval()
-    if model.conf['classifier']['name'].lower() in ('window_sampled_cnn_softmax', 'window_sampled_softmax'):
-        model.classify_layer.update_embedding_matrix()
-
     total_forward_loss, total_backward_loss, total_tag = 0.0, 0.0, 0.0
     add_sentence_boundary_ids = model.conf['token_embedder'].get('add_sentence_boundary_ids', False)
     for word_inputs, char_inputs, lengths, text, targets in valid_batch.get():
@@ -129,6 +127,18 @@ def train_model(epoch: int,
     add_sentence_boundary_ids = conf['token_embedder'].get('add_sentence_boundary_ids', False)
 
     for word_inputs, char_inputs, lengths, texts, targets in train_batch.get():
+        if conf['classifier']['name'].lower() in ('window_sampled_cnn_softmax', 'window_sampled_softmax'):
+            negative_sample_targets = []
+            batch_size, seq_len = targets[0].size()
+            for i in range(batch_size):
+                true_length = lengths[i].item() - 2 if add_sentence_boundary_ids else lengths[i].item()
+                negative_sample_targets.append(targets[1][i, 0].item())
+                if true_length > 1:
+                    negative_sample_targets.append(targets[1][i, 1].item())
+                for j in range(true_length):
+                    negative_sample_targets.append(targets[0][i, j].item())
+            model.classify_layer.update_negative_samples(negative_sample_targets)
+
         model.zero_grad()
         forward_loss, backward_loss = model.forward(word_inputs, char_inputs, lengths, targets)
         loss = 0.5 * (forward_loss + backward_loss)

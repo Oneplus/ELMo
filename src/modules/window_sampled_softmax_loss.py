@@ -1,108 +1,109 @@
 #!/usr/bin/env python
+from typing import List
 import torch
 import numpy as np
+from collections import Counter
 
 
 class WindowSampledSoftmaxLoss(torch.nn.Module):
     def __init__(self,
+                 num_words: int,
                  embedding_dim: int,
-                 n_class: int,
-                 n_samples: int,
-                 use_cuda: bool):
+                 num_samples: int,
+                 sparse: bool = False):
 
         super(WindowSampledSoftmaxLoss, self).__init__()
-        self.n_samples = n_samples
-        self.n_class = n_class
-        self.use_cuda = use_cuda
-        self.criterion = torch.nn.CrossEntropyLoss(size_average=False)
+        self.sparse = sparse
 
-        # indexing of negative samples word to id
-        self.negative_samples = []
-        self.word_to_column = {0: 0}
+        if sparse:
+            # create our own sparse embedding
+            self.softmax_w = torch.nn.Embedding(num_words, embedding_dim, sparse=True)
+            self.softmax_w.weight.data.normal_(mean=0.0, std=1.0 / np.sqrt(embedding_dim))
+            self.softmax_b = torch.nn.Embedding(num_words, 1, sparse=True)
+            self.softmax_b.weight.data.fill_(0.0)
+        else:
+            # just create tensors to use as the embeddings
+            # Glorit init (std=(1.0 / sqrt(fan_in))
+            self.softmax_w = torch.nn.Parameter(torch.randn(num_words, embedding_dim) / np.sqrt(embedding_dim))
+            self.softmax_b = torch.nn.Parameter(torch.zeros(num_words))
 
-        # indexing of word to id
-        self.all_word = []
-        self.all_word_to_column = {0: 0}
-
-        self.softmax_w = torch.nn.Embedding(n_class, embedding_dim)
-        self.softmax_w.weight.data.normal_(mean=0.0, std=1.0 / np.sqrt(embedding_dim))
-
-        self.softmax_b = torch.nn.Embedding(n_class, 1)
-        self.softmax_b.weight.data.fill_(0.0)
-
-        self.current_embed_matrix = None
+        self._criterion = torch.nn.CrossEntropyLoss(size_average=False)
+        self._negative_samples = []
+        self._negative_samples_counter = Counter()
+        self._num_samples = num_samples
+        self._embedding_dim = embedding_dim
+        self._num_words = num_words
 
     def forward(self,
                 embeddings: torch.Tensor,
-                targets: torch.Tensor) -> torch.Tensor:
-        batch_size = targets.size(0)
+                targets: torch.Tensor,
+                target_token_embedding: torch.Tensor = None) -> torch.Tensor:
 
-        if self.training:
-            for i in range(batch_size):
-                targets[i] = self.word_to_column.get(targets[i].tolist())
-            word_to_column = self.word_to_column
-            words = self.negative_samples
+        if embeddings.shape[0] == 0:
+            # empty batch
+            return torch.tensor(0.0).to(embeddings.device)  # pylint: disable=not-callable
+
+        if not self.training:
+            return self._forward_eval(embeddings, targets)
         else:
-            for i in range(batch_size):
-                targets[i] = self.all_word_to_column.get(targets[i].tolist(), 0)
-            word_to_column = self.all_word_to_column
-            words = self.all_word
+            return self._forward_train(embeddings, targets, target_token_embedding)
 
-        samples = embeddings.new_zeros(len(word_to_column))
-        for word in words:
-            samples[word_to_column[word]] = word
+    def _forward_train(self,
+                       embeddings: torch.Tensor,
+                       targets: torch.Tensor,
+                       target_token_embedding: torch.Tensor) -> torch.Tensor:
+        assert len(self._negative_samples) > 0
 
-        tag_scores = (embeddings.matmul(self.current_embed_matrix)).view(batch_size, -1) + \
-                     (self.softmax_b.forward(samples)).view(1, -1)
-        return self.criterion(tag_scores, targets)
+        num_targets = targets.size(0)
+        new_targets = targets.new_zeros(num_targets)
+        all_ids = targets.new_zeros(len(self._negative_samples_counter))
+        indexing = {}
+        for i, negative_sample in enumerate(self._negative_samples_counter):
+            all_ids[i] = negative_sample
+            indexing[negative_sample] = i
 
-    def update_embedding_matrix(self):
-        if self.training:
-            words = self.negative_samples
-            word_to_column = self.word_to_column
+        for i in range(num_targets):
+            new_targets[i] = indexing[targets[i].item()]
+
+        if self.sparse:
+            all_ids_1 = all_ids.unsqueeze(1)
+            all_w = self.softmax_w(all_ids_1).squeeze(1)
+            all_b = self.softmax_b(all_ids_1).squeeze(2).squeeze(1)
         else:
-            words = self.all_word
-            word_to_column = self.all_word_to_column
+            all_w = torch.nn.functional.embedding(all_ids, self.softmax_w)
+            # the unsqueeze / squeeze works around an issue with 1 dim
+            # embeddings
+            all_b = torch.nn.functional.embedding(all_ids, self.softmax_b.unsqueeze(1)).squeeze(1)
 
-        columns = torch.LongTensor(len(words) + 1)
-        for i, word in enumerate(words):
-            columns[word_to_column[word]] = word
-        columns[0] = 0
+        scores = embeddings.matmul(all_w.t()) + all_b.unsqueeze(0)
+        return self._criterion(scores, new_targets)
 
-        if self.use_cuda:
-            columns = columns.cuda()
+    def _forward_eval(self, embeddings: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        if self.sparse:
+            w = self.softmax_w.weight
+            b = self.softmax_b.weight.squeeze(1)
+        else:
+            w = self.softmax_w
+            b = self.softmax_b
 
-        self.current_embed_matrix = self.softmax_w.forward(columns).transpose(0, 1)
+        log_softmax = torch.nn.functional.log_softmax(torch.matmul(embeddings, w.t()) + b, dim=-1)
+        if self.tie_embeddings and not self.use_character_inputs:
+            targets_ = targets + 1
+        else:
+            targets_ = targets
+        return torch.nn.functional.nll_loss(log_softmax, targets_.long(),
+                                            reduction="sum")
 
     def update_negative_samples(self,
-                                word_inp: torch.Tensor,
-                                chars_inp: torch.Tensor,
-                                mask: torch.Tensor):
-        batch_size, seq_len = mask.size()
-        words_in_batch = set()
+                                targets: List[str]):
         # put all the words in the batch as `words_in_batch`
-        for i in range(batch_size):
-            for j in range(seq_len):
-                if mask[i][j] == 0:
-                    continue
-                word = word_inp[i][j].tolist()
-                words_in_batch.add(word)
+        for target in targets:
+            self._negative_samples.append(target)
+            self._negative_samples_counter[target] += 1
 
-        for word in words_in_batch:
-            # update word indexing
-            if word not in self.all_word_to_column:
-                self.all_word.append(word)
-                self.all_word_to_column[word] = len(self.all_word_to_column)
-
-            # update negative samples word indexing
-            if word not in self.word_to_column:
-                # if the current negative samples don't reach the limit
-                if len(self.negative_samples) < self.n_samples:
-                    self.negative_samples.append(word)
-                    self.word_to_column[word] = len(self.word_to_column)
-                # shift all the samples in the words_in_batch to the last one
-                else:
-                    while self.negative_samples[0] in words_in_batch:
-                        self.negative_samples = self.negative_samples[1:] + [self.negative_samples[0]]
-                    self.word_to_column[word] = self.word_to_column.pop(self.negative_samples[0])
-                    self.negative_samples = self.negative_samples[1:] + [word]
+        while len(self._negative_samples_counter) > self._num_samples:
+            target = self._negative_samples[0]
+            self._negative_samples = self._negative_samples[1:]
+            self._negative_samples_counter[target] -= 1
+            if self._negative_samples_counter[target] == 0:
+                self._negative_samples_counter.pop(target)

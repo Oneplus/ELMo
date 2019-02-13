@@ -3,11 +3,11 @@ from typing import List
 import torch
 import h5py
 import logging
-from .input_layer_base import InputLayerBase
+from .input_embed_base import InputEmbedderBase
 logger = logging.getLogger(__name__)
 
 
-class ContextualizedWordEmbeddings(InputLayerBase):
+class ContextualizedWordEmbeddings(InputEmbedderBase):
     def __init__(self, input_field_name, lexicon_path, use_cuda):
         super(ContextualizedWordEmbeddings, self).__init__(input_field_name)
         self.use_cuda = use_cuda

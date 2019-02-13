@@ -1,10 +1,10 @@
 #!/usr/bin/env python
-from .input_encoder_base import InputEncoderBase
+from .encoder_base import EncoderBase
 
 
-class DummyInputEncoder(InputEncoderBase):
+class DummyEncoder(EncoderBase):
     def __init__(self):
-        super(DummyInputEncoder, self).__init__()
+        super(DummyEncoder, self).__init__()
 
     def forward(self, x, *args):
         return x

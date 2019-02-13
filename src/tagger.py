@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 from __future__ import print_function
 from __future__ import unicode_literals
-from typing import Dict, List
+from typing import Dict, List, Union
 import os
 import errno
 import sys
@@ -17,18 +17,21 @@ import torch
 import subprocess
 import shutil
 import numpy as np
-from seqlabel.batch import Batcher, BucketBatcher, BatcherBase
-from seqlabel.batch import TagBatch, LengthBatch, TextBatch, InputBatch
-from seqlabel.elmo import InputLayerBase, ContextualizedWordEmbeddings
-from seqlabel.dummy_inp import DummyInputEncoder
-from seqlabel.project_inp import ProjectedInputEncoder
+from seqlabel.batch import InputBatchBase, Batcher, BucketBatcher, BatcherBase
+from seqlabel.batch import TagBatch, LengthBatch, TextBatch, WordBatch, CharacterBatch
+from seqlabel.elmo import InputEmbedderBase, ContextualizedWordEmbeddings
+from seqlabel.lstm_token_encoder import LstmTokenEmbedder
+from seqlabel.cnn_token_encoder import ConvTokenEmbedder
+from seqlabel.sum_input_encoder import AffineTransformInputEncoder, SummationInputEncoder
+from seqlabel.concat_input_encoder import ConcatenateInputEncoder
+from seqlabel.dummy_inp import DummyEncoder
+from seqlabel.project_inp import ProjectedEncoder
 from seqlabel.crf_layer import CRFLayer
 from seqlabel.classify_layer import ClassifyLayer
 from modules.embeddings import Embeddings
 from modules.embeddings import load_embedding_txt
 from allennlp.modules.seq2seq_encoders.pytorch_seq2seq_wrapper import PytorchSeq2SeqWrapper
 from allennlp.modules.stacked_bidirectional_lstm import StackedBidirectionalLstm
-from allennlp.modules.input_variational_dropout import InputVariationalDropout
 from allennlp.nn.util import get_mask_from_sequence_lengths
 from allennlp.training.optimizers import DenseSparseAdam
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
@@ -84,40 +87,95 @@ def read_segment_corpus(path: str):
 
 class SeqLabelModel(torch.nn.Module):
     def __init__(self, conf: Dict,
-                 input_layers: List[InputLayerBase],
+                 input_batchers: Dict[str, Union[WordBatch, CharacterBatch]],
                  n_class: int,
                  use_cuda: bool):
         super(SeqLabelModel, self).__init__()
         self.n_class = n_class
         self.use_cuda = use_cuda
         self.input_dropout = torch.nn.Dropout2d(p=conf["dropout"])
-        self.dropout = InputVariationalDropout(p=conf["dropout"])
 
-        self.input_layers = torch.nn.ModuleList(input_layers)
+        input_layers = {}
+        for i, c in enumerate(conf['input']):
+            if c['type'] == 'embeddings':
+                if 'pretrained' in c:
+                    embs = load_embedding_txt(c['pretrained'], c['has_header'])
+                    logger.info('loaded {0} embedding entries.'.format(len(embs[0])))
+                else:
+                    embs = None
+                name = c['name']
+                mapping = input_batchers[name].mapping
+                layer = Embeddings(c['dim'], mapping, fix_emb=c['fixed'],
+                                   embs=embs, normalize=c.get('normalize', False), input_field_name=name)
+                logger.info('embedding for field {0} '
+                            'created with {1} x {2}.'.format(c['field'], layer.n_V, layer.n_d))
+                input_layers[name] = layer
+
+            elif c['type'] == 'cnn_encoder' or c['type'] == 'lstm_encoder':
+                name = c['name']
+                mapping = input_batchers[name].mapping
+                embeddings = Embeddings(c['dim'], mapping, fix_emb=False, embs=None, normalize=False,
+                                        input_field_name='{0}_ch_emb'.format(name))
+                logger.info('character embedding for field {0} '
+                            'created with {1} x {2}.'.format(c['field'], embeddings.n_V, embeddings.n_d))
+                if c['type'] == 'lstm_encoder':
+                    layer = LstmTokenEmbedder(c['dim'], embeddings, conf['dropout'], use_cuda, input_field_name=name)
+                elif c['type'] == 'cnn_encoder':
+                    layer = ConvTokenEmbedder(c['dim'], embeddings, c['filters'], c.get('n_highway', 1),
+                                              c.get('activation', 'relu'), use_cuda, input_field_name=name)
+                else:
+                    raise ValueError('Unknown type: {}'.format(c['type']))
+                input_layers[name] = layer
+
+            elif c['type'] == 'elmo':
+                name = c['name']
+                layer = ContextualizedWordEmbeddings(name, c['path'], use_cuda)
+                input_layers[name] = layer
+
+            else:
+                raise ValueError('{} unknown input layer'.format(c['type']))
+
+        self.input_layers = torch.nn.ModuleDict(input_layers)
+        input_encoders = []
         input_dim = 0
-        for input_layer in self.input_layers:
-            # the last one in auxiliary
-            input_dim += input_layer.get_output_dim()
+        for i, c in enumerate(conf['input_encoder']):
+            input_info = {name: [entry['dim'] for entry in conf['input'] if entry['name'] == name][0]
+                          for name in c['input']}
 
-        input_encoder_name = conf['input_encoder']['type'].lower()
-        if input_encoder_name == 'stacked_bidirectional_lstm':
+            if c['type'] == 'affine':
+                input_encoder = AffineTransformInputEncoder(input_info, c['dim'], use_cuda)
+            elif c['type'] == 'sum':
+                input_encoder = SummationInputEncoder(input_info, use_cuda)
+            elif c['type'] == 'concat':
+                input_encoder = ConcatenateInputEncoder(input_info, use_cuda)
+            else:
+                raise ValueError('{} unknown input encoder'.format(c['type']))
+
+            input_dim += input_encoder.get_output_dim()
+            input_encoders.append(input_encoder)
+
+        self.input_encoders = torch.nn.ModuleList(input_encoders)
+
+        encoder_name = conf['encoder']['type'].lower()
+        if encoder_name == 'stacked_bidirectional_lstm':
             lstm = StackedBidirectionalLstm(input_size=input_dim,
-                                            hidden_size=conf['input_encoder']['hidden_dim'],
-                                            num_layers=conf['input_encoder']['n_layers'],
+                                            hidden_size=conf['encoder']['hidden_dim'],
+                                            num_layers=conf['encoder']['n_layers'],
                                             recurrent_dropout_probability=conf['dropout'],
                                             layer_dropout_probability=conf['dropout'],
-                                            use_highway=conf['input_encoder'].get('use_highway', True))
+                                            use_highway=conf['encoder'].get('use_highway', True))
             self.encoder = PytorchSeq2SeqWrapper(lstm, stateful=False)
             encoded_input_dim = self.encoder.get_output_dim()
-        elif input_encoder_name == 'project':
-            self.encoder = ProjectedInputEncoder(input_dim,
-                                                 conf['input_encoder']['hidden_dim'])
+        elif encoder_name == 'project':
+            self.encoder = ProjectedEncoder(input_dim,
+                                            conf['encoder']['hidden_dim'],
+                                            dropout=conf['dropout'])
             encoded_input_dim = self.encoder.get_output_dim()
-        elif input_encoder_name == 'dummy':
-            self.encoder = DummyInputEncoder()
+        elif encoder_name == 'dummy':
+            self.encoder = DummyEncoder()
             encoded_input_dim = input_dim
         else:
-            raise ValueError('Unknown input encoder: {}'.format(input_encoder_name))
+            raise ValueError('Unknown input encoder: {}'.format(encoder_name))
 
         if conf["classifier"]["type"].lower() == 'crf':
             self.classify_layer = CRFLayer(encoded_input_dim, n_class, use_cuda)
@@ -131,30 +189,27 @@ class SeqLabelModel(torch.nn.Module):
     def forward(self, inputs: Dict[str, torch.Tensor],
                 targets: torch.Tensor):
         # input_: (batch_size, seq_len)
-        start_time = time.time()
+        embedded_input = {}
+        for name, fn in self.input_layers.items():
+            input_ = inputs[name]
+            embedded_input[name] = fn(input_)
+
+        encoded_input = []
+        for encoder_ in self.input_encoders:
+            ordered_names = encoder_.get_ordered_names()
+            args_ = {name: embedded_input[name] for name in ordered_names}
+            encoded_input.append(self.input_dropout(encoder_(args_)))
+
+        encoded_input = torch.cat(encoded_input, dim=-1)
+
         lengths = inputs['length']
         mask = get_mask_from_sequence_lengths(lengths, lengths.max())
 
-        embedded_inputs = []
-        for input_layer in self.input_layers:
-            input_field_name = input_layer.input_field_name
-            embedded_inputs.append(input_layer(inputs[input_field_name]))
-
-        embedded_inputs = torch.cat(embedded_inputs, dim=-1)
-
-        if not self.training:
-            self.emb_time += time.time() - start_time
-
-        embedded_inputs = self.input_dropout(embedded_inputs)
+        encoded_input = self.input_dropout(encoded_input)
         # input_: (batch_size, seq_len, input_dim)
 
-        encoded_inputs = self.encoder(embedded_inputs, mask)
+        encoded_inputs = self.encoder(encoded_input, mask)
         # encoded_input_: (batch_size, seq_len, dim)
-
-        encoded_inputs = self.dropout(encoded_inputs)
-
-        if not self.training:
-            self.encode_time += time.time() - start_time
 
         start_time = time.time()
 
@@ -350,8 +405,7 @@ def train():
     input_batches = {}
     for c in conf['input']:
         if c['type'] == 'embeddings':
-            batch = InputBatch(c['name'], c['field'], c['min_cut'],
-                               c.get('oov', '<oov>'), c.get('pad', '<pad>'), not c.get('cased', True), use_cuda)
+            batch = WordBatch(c['name'], c['field'], c['min_cut'], not c.get('cased', True), use_cuda)
             if 'pretrained' in c:
                 batch.create_dict_from_file(c['pretrained'])
             if c['fixed']:
@@ -359,6 +413,12 @@ def train():
                     logger.warning('it is un-reasonable to use fix embedding without pretraining.')
             else:
                 batch.create_dict_from_dataset(raw_training_data)
+            input_batches[c['name']] = batch
+        elif c['type'] == 'cnn_encoder' or c['type'] == 'lstm_encoder':
+            min_char = 1 if c['type'] == 'lstm_encoder' else max([w for w, n in c['filters']])
+            batch = CharacterBatch(min_char, c['name'], c['field'],
+                                   lower=not c.get('cased', True), use_cuda=use_cuda)
+            batch.create_dict_from_dataset(raw_training_data)
             input_batches[c['name']] = batch
 
     # till now, lexicon is fixed, but embeddings was not
@@ -369,29 +429,6 @@ def train():
     target_batch = TagBatch(conf['tag_field'], use_cuda)
     target_batch.create_dict_from_dataset(raw_training_data)
     logger.info('tags: {0}'.format(target_batch.mapping))
-
-    input_layers = []
-    for i, c in enumerate(conf['input']):
-        if c['type'] == 'embeddings':
-            if 'pretrained' in c:
-                embs = load_embedding_txt(c['pretrained'], c['has_header'])
-                logger.info('loaded {0} embedding entries.'.format(len(embs[0])))
-            else:
-                embs = None
-            name = c['name']
-            mapping = input_batches[name].mapping
-            layer = Embeddings(c['dim'], mapping, fix_emb=c['fixed'],
-                               embs=embs, normalize=c.get('normalize', False),
-                               input_field_name=name)
-            logger.info('embedding layer for field {0} '
-                        'created with {1} x {2}.'.format(c['field'], layer.n_V, layer.n_d))
-            input_layers.append(layer)
-        elif c['type'] == 'elmo':
-            name = c['name']
-            layer = ContextualizedWordEmbeddings(name, c['path'], use_cuda)
-            input_layers.append(layer)
-        else:
-            raise ValueError('{} unknown input layer'.format(c['type']))
 
     n_tags = target_batch.n_tags
     id2label = {ix: label for label, ix in target_batch.mapping.items()}
@@ -416,7 +453,7 @@ def train():
     else:
         test_batcher = None
 
-    model = SeqLabelModel(conf, input_layers, n_tags, use_cuda)
+    model = SeqLabelModel(conf, input_batches, n_tags, use_cuda)
 
     logger.info(str(model))
     if use_cuda:
@@ -449,7 +486,7 @@ def train():
     for name, input_batcher in input_batches.items():
         if name == 'text' or name == 'length':
             continue
-        with codecs.open(os.path.join(opt.model, '{0}.dic'.format(input_batcher.name)), 'w',
+        with codecs.open(os.path.join(opt.model, '{0}.dic'.format(input_batcher.namespace)), 'w',
                          encoding='utf-8') as fpo:
             for w, i in input_batcher.mapping.items():
                 print('{0}\t{1}'.format(w, i), file=fpo)
@@ -518,28 +555,25 @@ def test():
         use_cuda = True
 
     input_batches = {}
-    input_layers = []
     for c in conf['input']:
         if c['type'] == 'embeddings':
-            name = c['name']
-            batcher = InputBatch(c['name'], c['field'], c['min_cut'],
-                                 c.get('oov', '<oov>'), c.get('pad', '<pad>'), not c.get('cased', True), use_cuda)
+            batch = WordBatch(c['name'], c['field'], c['min_cut'], not c.get('cased', True), use_cuda)
             with open(os.path.join(model_path, '{0}.dic'.format(c['name'])), 'r') as fpi:
-                mapping = batcher.mapping
+                mapping = batch.mapping
                 for line in fpi:
                     token, i = line.strip().split('\t')
                     mapping[token] = int(i)
-            layer = Embeddings(c['dim'], batcher.mapping, fix_emb=c['fixed'],
-                               embs=None, normalize=c.get('normalize', False), input_field_name=name)
-            logger.info('embedding layer for field {0} '
-                        'created with {1} x {2}.'.format(c['field'], layer.n_V, layer.n_d))
-            input_batches[name] = batcher
-        elif c['type'] == 'elmo':
-            name = c['name']
-            layer = ContextualizedWordEmbeddings(name, c['path'], use_cuda)
-        else:
-            raise ValueError('Unsupported input type')
-        input_layers.append(layer)
+            input_batches[c['name']] = batch
+        elif c['type'] == 'cnn_encoder' or c['type'] == 'lstm_encoder':
+            min_char = 1 if c['type'] == 'lstm_encoder' else max([w for w, n in c['filters']])
+            batch = CharacterBatch(min_char, c['name'], c['field'],
+                                   lower=not c.get('cased', True), use_cuda=use_cuda)
+            with open(os.path.join(model_path, '{0}.dic'.format(c['name'])), 'r') as fpi:
+                mapping = batch.mapping
+                for line in fpi:
+                    token, i = line.strip().split('\t')
+                    mapping[token] = int(i)
+            input_batches[c['name']] = batch
 
     input_batches['text'] = TextBatch(conf['text_field'], use_cuda)
     input_batches['length'] = LengthBatch(use_cuda)
@@ -555,7 +589,7 @@ def test():
     logger.info('tags: {0}'.format(target_batch.mapping))
 
     n_tags = len(id2label)
-    model = SeqLabelModel(conf, input_layers, n_tags, use_cuda)
+    model = SeqLabelModel(conf, input_batches, n_tags, use_cuda)
 
     model.load_state_dict(torch.load(os.path.join(model_path, 'model.pkl'), map_location=lambda storage, loc: storage))
     if use_cuda:

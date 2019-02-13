@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-from typing import List, Tuple, Dict, Iterable
+from typing import List, Tuple, Dict, Union
 import random
 import torch
 import logging
@@ -7,6 +7,18 @@ import collections
 import numpy as np
 from sklearn.cluster import KMeans
 logger = logging.getLogger(__name__)
+Item = Union[List[str], Tuple[str]]
+
+
+class SpecialToken(object):
+    oov = '<oov>'
+    pad = '<pad>'
+    bos = '<S>'
+    eos = '</S>'
+    bow = '<W>'
+    eow = '</W>'
+    oov_id = 0
+    pad_id = 1
 
 
 class TagBatch(object):
@@ -49,15 +61,13 @@ class InputBatchBase(object):
         raise NotImplementedError()
 
 
-class InputBatch(InputBatchBase):
-    def __init__(self, name: str, field: int, min_cut: int, oov: str, pad: str, lower: bool, use_cuda: bool):
-        super(InputBatch, self).__init__(use_cuda)
-        self.name = name
+class WordBatch(InputBatchBase, SpecialToken):
+    def __init__(self, namespace: str, field: int, min_cut: int, lower: bool, use_cuda: bool):
+        super(WordBatch, self).__init__(use_cuda)
+        self.namespace = namespace
         self.field = field
         self.min_cut = min_cut
-        self.oov = oov
-        self.pad = pad
-        self.mapping = {oov: 0, pad: 1}
+        self.mapping = {self.oov: self.oov_id, self.pad: self.pad_id}
         self.lower = lower
         self.n_tokens = 2
         logger.info('{0}'.format(self))
@@ -67,13 +77,13 @@ class InputBatch(InputBatchBase):
     def create_one_batch(self, dataset: List[List[Tuple[str]]]):
         batch_size = len(dataset)
         seq_len = max([len(data) for data in dataset])
-        batch = torch.LongTensor(batch_size, seq_len).fill_(1)
+        batch = torch.LongTensor(batch_size, seq_len).fill_(self.pad_id)
         for i, data in enumerate(dataset):
             for j, fields in enumerate(data):
                 word = fields[self.field]
                 if self.lower:
                     word = word.lower()
-                batch[i, j] = self.mapping.get(word, 0)
+                batch[i, j] = self.mapping.get(word, self.oov_id)
         if self.use_cuda:
             batch = batch.cuda()
         return batch
@@ -110,6 +120,57 @@ class InputBatch(InputBatchBase):
                 self.mapping[word] = len(self.mapping)
                 n_entries += 1
         logger.info('+ loaded {0} entries from file: {1}'.format(n_entries, filename))
+        logger.info('+ current number of entries in mapping is: {0}'.format(len(self.mapping)))
+
+
+class CharacterBatch(InputBatchBase, SpecialToken):
+    def __init__(self, min_char: int, namespace: str, field: int, lower: bool, use_cuda: bool):
+        super(CharacterBatch, self).__init__(use_cuda)
+        self.namespace = namespace
+        self.min_char = min_char
+        self.field = field
+        self.mapping = {self.oov: self.oov_id, self.pad: self.pad_id}
+        self.lower = lower
+        self.n_tokens = 3
+        logger.info('{0}'.format(self))
+        logger.info('+ field: {0}'.format(self.field))
+
+    def create_one_batch(self, raw_dataset: List[List[Item]]):
+        batch_size = len(raw_dataset)
+        seq_len = max([len(input_) for input_ in raw_dataset])
+        max_char_len = max([len(fields[self.field]) for raw_data_ in raw_dataset for fields in raw_data_])
+        max_char_len = max(self.min_char, max_char_len)
+
+        batch = torch.LongTensor(batch_size, seq_len, max_char_len).fill_(self.pad_id)
+        lengths = torch.LongTensor(batch_size, seq_len).fill_(1)
+        for i, raw_data_ in enumerate(raw_dataset):
+            for j, fields in enumerate(raw_data_):
+                field = fields[self.field]
+                if self.lower:
+                    field = field.lower()
+                lengths[i, j] = len(field)
+                for k, key in enumerate(field):
+                    batch[i, j, k] = self.mapping.get(key, self.oov_id)
+        if self.use_cuda:
+            batch = batch.cuda()
+            lengths = lengths.cuda()
+        return batch, lengths
+
+    def get_field(self):
+        return self.field
+
+    def create_dict_from_dataset(self, raw_dataset_: List[List[Item]]):
+        n_entries = 0
+        for raw_data_ in raw_dataset_:
+            for fields in raw_data_:
+                word_ = fields[self.field]
+                if self.lower:
+                    word_ = word_.lower()
+                for key in word_:
+                    if key not in self.mapping:
+                        self.mapping[key] = len(self.mapping)
+                        n_entries += 1
+        logger.info('+ loaded {0} entries from input'.format(n_entries))
         logger.info('+ current number of entries in mapping is: {0}'.format(len(self.mapping)))
 
 

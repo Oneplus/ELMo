@@ -44,7 +44,7 @@ class Model(BiLMBase):
             raise NotImplementedError('cnn_softmax is not ready.')
         elif classify_layer_name == 'sampled_softmax':
             sparse = conf['optimizer']['type'].lower() in ('sgd', 'adam', 'dense_sparse_adam')
-            self.classify_layer = SampledSoftmaxLoss(n_class, self.output_dim, c['n_samples'], sparse=sparse, unk_id=0)
+            self.classify_layer = SampledSoftmaxLoss(n_class, self.output_dim, c['n_samples'], sparse=sparse)
         elif classify_layer_name == 'window_sampled_softmax':
             sparse = conf['optimizer']['type'].lower() in ('sgd', 'adam', 'dense_sparse_adam')
             self.classify_layer = WindowSampledSoftmaxLoss(n_class, self.output_dim, c['n_samples'], sparse=sparse)

@@ -10,10 +10,14 @@ class WindowSampledSoftmaxLoss(torch.nn.Module):
                  num_words: int,
                  embedding_dim: int,
                  num_samples: int,
-                 sparse: bool = False):
+                 sparse: bool = False,
+                 unk_id: int = None,
+                 use_character_inputs: bool = True):
 
         super(WindowSampledSoftmaxLoss, self).__init__()
-        self.sparse = sparse
+        self.tie_embeddings = False
+
+        assert num_samples < num_words
 
         if sparse:
             # create our own sparse embedding
@@ -26,6 +30,12 @@ class WindowSampledSoftmaxLoss(torch.nn.Module):
             # Glorit init (std=(1.0 / sqrt(fan_in))
             self.softmax_w = torch.nn.Parameter(torch.randn(num_words, embedding_dim) / np.sqrt(embedding_dim))
             self.softmax_b = torch.nn.Parameter(torch.zeros(num_words))
+
+        self.sparse = sparse
+        self.use_character_inputs = use_character_inputs
+
+        if use_character_inputs:
+            self._unk_id = unk_id
 
         self._criterion = torch.nn.CrossEntropyLoss(size_average=False)
         self._negative_samples = []
@@ -64,6 +74,9 @@ class WindowSampledSoftmaxLoss(torch.nn.Module):
 
         for i in range(num_targets):
             new_targets[i] = indexing[targets[i].item()]
+
+        all_ids.requires_grad_(False)
+        new_targets.requires_grad_(False)
 
         if self.sparse:
             all_ids_1 = all_ids.unsqueeze(1)

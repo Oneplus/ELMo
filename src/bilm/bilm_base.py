@@ -9,7 +9,6 @@ from .bengio03 import Bengio03HighwayBiLmV2, Bengio03HighwayBiLm, Bengio03ResNet
 from .lbl import LBLHighwayBiLm, LBLHighwayBiLmV2, LBLResNetBiLm
 from .self_attn import SelfAttentiveLBLBiLM, SelfAttentiveLBLBiLMV2
 from allennlp.modules.elmo_lstm import ElmoLstm
-from allennlp.modules.input_variational_dropout import InputVariationalDropout
 from allennlp.nn.util import get_mask_from_sequence_lengths
 from modules.embeddings import Embeddings
 
@@ -20,7 +19,6 @@ class BiLMBase(torch.nn.Module):
                  char_batch: CharacterBatch):
         super(BiLMBase, self).__init__()
         self.conf = conf
-        self.dropout = InputVariationalDropout(p=conf['dropout'])
 
         c = conf['token_embedder']
         if word_batch is not None:
@@ -150,7 +148,6 @@ class BiLMBase(torch.nn.Module):
                   lengths: torch.Tensor,):
 
         embedded_tokens = self.token_embedder(word_inputs, chars_inputs)
-        embedded_tokens = self.dropout(embedded_tokens)
 
         mask = get_mask_from_sequence_lengths(lengths, lengths.max())
 

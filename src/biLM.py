@@ -23,7 +23,7 @@ from modules.window_sampled_softmax_loss import WindowSampledSoftmaxLoss
 from modules.window_sampled_cnn_softmax_loss import WindowSampledCNNSoftmaxLoss
 from allennlp.modules.sampled_softmax_loss import SampledSoftmaxLoss
 from allennlp.training.optimizers import DenseSparseAdam
-
+from allennlp.training.learning_rate_schedulers import NoamLR, CosineWithRestarts, LearningRateScheduler
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
                     level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -112,6 +112,7 @@ def train_model(epoch: int,
                 opt,
                 model: Model,
                 optimizer: torch.optim.Optimizer,
+                scheduler: LearningRateScheduler,
                 train_batch: BatcherBase,
                 valid_batch: BatcherBase,
                 test_batch: BatcherBase,
@@ -123,7 +124,8 @@ def train_model(epoch: int,
     start_time = time.time()
 
     improved = False
-    warmup_step = conf['optimizer'].get('warmup_step', None)
+    warmup_step = conf['optimizer']['warmup_step']
+    scheduler_name = conf['optimizer'].get('scheduler', 'cosine')
     add_sentence_boundary_ids = conf['token_embedder'].get('add_sentence_boundary_ids', False)
 
     for word_inputs, char_inputs, lengths, texts, targets in train_batch.get():
@@ -164,9 +166,16 @@ def train_model(epoch: int,
         optimizer.step()
         step += 1
         global_step = epoch * train_batch.num_batches() + step
-        if warmup_step is not None and global_step < warmup_step:
-            curr_lr = conf['optimizer']['lr'] * global_step / warmup_step
-            optimizer.param_groups[0]['lr'] = curr_lr
+
+        if scheduler_name in ['cosine', 'constant', 'dev_perf']:
+            # linear warmup stage
+            if global_step < warmup_step:
+                curr_lr = conf['optimizer']['lr'] * global_step / warmup_step
+                optimizer.param_groups[0]['lr'] = curr_lr
+            if scheduler:
+                scheduler.step_batch(global_step)
+        elif scheduler_name == 'noam':
+            scheduler.step_batch(global_step)
 
         if step % opt.report_steps == 0:
             train_ppl, train_fwd_ppl, train_bwd_ppl = [np.exp(loss / total_tag)
@@ -186,6 +195,9 @@ def train_model(epoch: int,
                 train_ppl, train_fwd_ppl, train_bwd_ppl)
 
             if valid_batch is None:
+                if scheduler:
+                    scheduler.step(train_ppl, epoch)
+
                 if train_ppl < best_train:
                     best_train = train_ppl
                     log_str += ' NEW |'
@@ -200,6 +212,9 @@ def train_model(epoch: int,
                 valid_ppl, valid_fwd_ppl, valid_bwd_ppl = eval_model(model, valid_batch)
                 log_str = "| epoch {:3d} | step {:>6d} | lr {:.3g} |  dev ppl {:.2f} ({:.2f} {:.2f}) |".format(
                     epoch, step, optimizer.param_groups[0]['lr'], valid_ppl, valid_fwd_ppl, valid_bwd_ppl)
+
+                if scheduler:
+                    scheduler.step(valid_ppl, epoch)
 
                 if valid_ppl < best_valid:
                     improved = True
@@ -411,31 +426,25 @@ def train():
                                    dynamic_loss_scale=True,
                                    dynamic_loss_args={'init_scale': 2 ** 16})
 
-    best_train, best_valid, test_result = 1e8, 1e8, 1e8
-    max_decay_times = c.get('max_decay_times', 5)
-    max_patience = c.get('max_patience', 5)
-    patience = 0
-    decay_times = 0
-    decay_rate = c.get('decay_rate', 0.5)
+    scheduler_name = c.get('scheduler', 'noam')
+    if scheduler_name == 'cosine':
+        scheduler = CosineWithRestarts(optimizer, c['max_step'], eta_min=c.get('eta_min', 0.0))
+    elif scheduler_name == 'dev_perf':
+        scheduler = LearningRateScheduler.by_name('reduce_on_plateau')(optimizer, factor=c.get('decay_rate', 0.5),
+                                                                       patience=c.get('patience', 5),
+                                                                       min_lr=c.get('lr_min', 1e-6))
+    elif scheduler_name == 'noam':
+        scheduler = NoamLR(optimizer, model_size=c.get('model_size', 512),
+                           warmup_steps=c.get('warmup_step', 6000))
+    else:
+        scheduler = None
 
+    best_train, best_valid, test_result = 1e8, 1e8, 1e8
     for epoch in range(opt.max_epoch):
         best_train, best_valid, test_result, improved = train_model(
-            epoch, conf, opt, model, optimizer, training_batcher, valid_batcher, test_batcher,
+            epoch, conf, opt, model, optimizer, scheduler,
+            training_batcher, valid_batcher, test_batcher,
             best_train, best_valid, test_result)
-
-        if not improved:
-            patience += 1
-            if patience == max_patience:
-                decay_times += 1
-                if decay_times == max_decay_times:
-                    break
-
-                optimizer.param_groups[0]['lr'] *= decay_rate
-                patience = 0
-                logger.info('Max patience is reached, decay learning rate to '
-                            '{0}'.format(optimizer.param_groups[0]['lr']))
-        else:
-            patience = 0
 
     if raw_valid_data is None:
         logger.info("best train ppl: {:.6f}.".format(best_train))

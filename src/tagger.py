@@ -212,7 +212,7 @@ class SeqLabelModel(torch.nn.Module):
 
         encoded_inputs = self.dropout(encoded_inputs)
 
-        output, loss = self.classify_layer.forward(encoded_inputs, targets)
+        output, loss = self.classify_layer(encoded_inputs, targets)
 
         return output, loss
 

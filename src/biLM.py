@@ -35,6 +35,7 @@ class Model(BiLMBase):
                  char_batch: CharacterBatch,
                  n_class: int):
         super(Model, self).__init__(conf, word_batch, char_batch)
+        self.dropout = torch.nn.Dropout(conf['dropout'])
 
         c = conf['classifier']
         classify_layer_name = c['name'].lower()
@@ -59,7 +60,9 @@ class Model(BiLMBase):
         encoded_tokens, _, mask = self._encoding(word_inputs, chars_inputs, lengths)
 
         n_layers = encoded_tokens.size(0)
-        encoded_tokens = encoded_tokens[n_layers - 1]
+        # In both the bilm-tf and allennlp.bidirectional_language_model, there
+        # is a dropout layer before the final classification.
+        encoded_tokens = self.dropout(encoded_tokens[n_layers - 1])
 
         forward, backward = encoded_tokens.split(self.output_dim, 2)
 
@@ -172,7 +175,7 @@ def train_model(epoch: int,
             if global_step < warmup_step:
                 curr_lr = conf['optimizer']['lr'] * global_step / warmup_step
                 optimizer.param_groups[0]['lr'] = curr_lr
-            if scheduler:
+            if scheduler_name == 'cosine':
                 scheduler.step_batch(global_step)
         elif scheduler_name == 'noam':
             scheduler.step_batch(global_step)

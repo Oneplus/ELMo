@@ -29,7 +29,7 @@ class Model(BiLMBase):
     def forward(self, word_inputs, char_inputs, lengths):
         encoded_tokens, embedded_tokens, mask = self._encoding(word_inputs, char_inputs, lengths)
         embedded_tokens = torch.cat([embedded_tokens, embedded_tokens], dim=-1).unsqueeze(0)
-        output = torch.cat([embedded_tokens, encoded_tokens], dim=0)
+        output = torch.cat([encoded_tokens, embedded_tokens], dim=0)
         return output
 
     def load_model(self, path):

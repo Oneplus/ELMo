@@ -146,7 +146,7 @@ class BiLMBase(torch.nn.Module):
     def _encoding(self, word_inputs: torch.Tensor,
                   chars_inputs: torch.Tensor,
                   lengths: torch.Tensor,):
-
+        # NOTE: there is no dropout on the last layer.
         embedded_tokens = self.token_embedder(word_inputs, chars_inputs)
 
         mask = get_mask_from_sequence_lengths(lengths, lengths.max())
@@ -198,7 +198,7 @@ class BiLMBase(torch.nn.Module):
 
         tensor1_without_boundary_tokens = tensor1.new_zeros(*new_shape1)
         tensor2_without_boundary_tokens = tensor2.new_zeros(*new_shape2)
-        new_mask = tensor1.new_zeros((new_shape2[0], new_shape2[1]), dtype=torch.long)
+        new_mask = mask.new_zeros((new_shape2[0], new_shape2[1]))
         for i, j in enumerate(sequence_lengths):
             if j > 2:
                 tensor1_without_boundary_tokens[:, i, :(j - 2), :] = tensor1[:, i, 1:(j - 1), :]

@@ -201,7 +201,7 @@ class CharacterBatch(InputBatchBase, SpecialTokens):
                         batch[i, j, 0] = self.mapping.get(self.bow)
                         for k, key in enumerate(word):
                             batch[i, j, k + 1] = self.mapping.get(key, self.oov_id)
-                        batch[i, j, k + 1] = self.mapping.get(self.eow)
+                        batch[i, j, len(word) + 1] = self.mapping.get(self.eow)
                     else:
                         lengths[i, j] = len(word)
                         for k, key in enumerate(word):

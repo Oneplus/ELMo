@@ -55,12 +55,13 @@ class LstmbiLm(_EncoderBase):
             stacked_sequence_output = torch.cat([stacked_sequence_output, zeros], 1)
 
             # The states also need to have invalid rows added back.
-            new_states = []
-            for state in final_states:
-                state_dim = state.size(-1)
-                zeros = state.new_zeros(num_layers, batch_size - num_valid, state_dim)
-                new_states.append(torch.cat([state, zeros], 1))
-            final_states = new_states
+            if self.stateful:
+                new_states = []
+                for state in final_states:
+                    state_dim = state.size(-1)
+                    zeros = state.new_zeros(num_layers, batch_size - num_valid, state_dim)
+                    new_states.append(torch.cat([state, zeros], 1))
+                final_states = new_states
 
         # It's possible to need to pass sequences which are padded to longer than the
         # max length of the sequence to a Seq2StackEncoder. However, packing and unpacking
@@ -74,7 +75,8 @@ class LstmbiLm(_EncoderBase):
                                                       stacked_sequence_output[0].size(-1))
             stacked_sequence_output = torch.cat([stacked_sequence_output, zeros], 2)
 
-        self._update_states(final_states, restoration_indices)
+        if self.stateful:
+            self._update_states(final_states, restoration_indices)
 
         # Restore the original indices and return the sequence.
         # Has shape (num_layers, batch_size, sequence_length, hidden_size)

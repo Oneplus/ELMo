@@ -59,6 +59,7 @@ class BiLMBase(torch.nn.Module):
         c = conf['encoder']
         encoder_name = c['name'].lower()
         if encoder_name == 'elmo':
+            # NOTE: for fare comparison, we set stateful to false
             self.encoder = ElmoLstm(input_size=c['projection_dim'],
                                     hidden_size=c['projection_dim'],
                                     cell_size=c['dim'],
@@ -66,9 +67,8 @@ class BiLMBase(torch.nn.Module):
                                     num_layers=c['n_layers'],
                                     recurrent_dropout_probability=conf['dropout'],
                                     memory_cell_clip_value=c['cell_clip'],
-                                    state_projection_clip_value=c['proj_clip'])
-            # NOTE: for fare comparison, we set stateful to false
-            self.encoder.stateful = False
+                                    state_projection_clip_value=c['proj_clip'],
+                                    stateful=False)
         elif encoder_name == 'lstm':
             self.encoder = LstmbiLm(input_size=c['projection_dim'],
                                     hidden_size=c['projection_dim'],

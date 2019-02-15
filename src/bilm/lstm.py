@@ -13,7 +13,7 @@ class LstmbiLm(_EncoderBase):
                  hidden_size: int,
                  num_layers: int,
                  dropout: float):
-        super(LstmbiLm, self).__init__(stateful=True)
+        super(LstmbiLm, self).__init__(stateful=False)
         self.hidden_size = hidden_size
         self.cell_size = hidden_size
 

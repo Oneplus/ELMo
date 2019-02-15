@@ -40,6 +40,7 @@ class WindowSampledSoftmaxLoss(torch.nn.Module):
         self._criterion = torch.nn.CrossEntropyLoss(size_average=False)
         self._negative_samples = []
         self._negative_samples_counter = Counter()
+        self._sampled_indexing = np.zeros(num_words, dtype=np.int64)
         self._num_samples = num_samples
         self._embedding_dim = embedding_dim
         self._num_words = num_words
@@ -64,16 +65,12 @@ class WindowSampledSoftmaxLoss(torch.nn.Module):
                        target_token_embedding: torch.Tensor) -> torch.Tensor:
         assert len(self._negative_samples) > 0
 
-        num_targets = targets.size(0)
-        new_targets = targets.new_zeros(num_targets)
         all_ids = targets.new_zeros(len(self._negative_samples_counter))
-        indexing = {}
         for i, negative_sample in enumerate(self._negative_samples_counter):
             all_ids[i] = negative_sample
-            indexing[negative_sample] = i
+            self._sampled_indexing[negative_sample] = i
 
-        for i, target in enumerate(targets.tolist()):
-            new_targets[i] = indexing[target]
+        new_targets = torch.from_numpy(self._sampled_indexing[targets.cpu().detach().numpy()]).to(targets.device)
 
         all_ids.requires_grad_(False)
         new_targets.requires_grad_(False)
@@ -113,9 +110,17 @@ class WindowSampledSoftmaxLoss(torch.nn.Module):
         self._negative_samples.extend(targets)
         self._negative_samples_counter.update(targets)
 
-        while len(self._negative_samples_counter) > self._num_samples:
-            target = self._negative_samples[0]
-            self._negative_samples = self._negative_samples[1:]
+        num_samples_to_delete = len(self._negative_samples_counter) - self._num_samples
+        if num_samples_to_delete <= 0:
+            return
+
+        tail = 0
+        while num_samples_to_delete > 0:
+            target = self._negative_samples[tail]
+            tail += 1
             self._negative_samples_counter[target] -= 1
             if self._negative_samples_counter[target] == 0:
+                num_samples_to_delete -= 1
                 self._negative_samples_counter.pop(target)
+
+        self._negative_samples = self._negative_samples[tail:]

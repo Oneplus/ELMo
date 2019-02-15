@@ -22,12 +22,12 @@ class BiLMBase(torch.nn.Module):
 
         c = conf['token_embedder']
         if word_batch is not None:
-            word_embedder = Embeddings(c['word_dim'], word_batch.mapping, None, False, normalize=False)
+            word_embedder = Embeddings(c['word_dim'], word_batch.mapping, embs=None, fix_emb=False, normalize=False)
         else:
             word_embedder = None
 
         if char_batch is not None:
-            char_embedder = Embeddings(c['char_dim'], char_batch.mapping, None, False, normalize=False)
+            char_embedder = Embeddings(c['char_dim'], char_batch.mapping, embs=None, fix_emb=False, normalize=False)
         else:
             char_embedder = None
 
@@ -67,6 +67,8 @@ class BiLMBase(torch.nn.Module):
                                     recurrent_dropout_probability=conf['dropout'],
                                     memory_cell_clip_value=c['cell_clip'],
                                     state_projection_clip_value=c['proj_clip'])
+            # NOTE: for fare comparison, we set stateful to false
+            self.encoder.stateful = False
         elif encoder_name == 'lstm':
             self.encoder = LstmbiLm(input_size=c['projection_dim'],
                                     hidden_size=c['projection_dim'],

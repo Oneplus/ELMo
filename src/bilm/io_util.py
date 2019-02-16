@@ -28,15 +28,12 @@ def break_sentences(sentences: List[List[str]], max_sent_len: int) -> List[List[
 
 
 def read_corpus(path: str, max_sent_len: int = 20, max_chars: int = None):
-    dataset = []
     with codecs.open(path, 'r', encoding='utf-8') as fin:
-        for line in fin:
-            item = []
-            for token in line.strip().split():
-                if max_chars is not None and len(token) + 2 > max_chars:
-                    token = token[:max_chars - 2]
-                item.append(token)
-            dataset.append(item)
+        if max_chars:
+            dataset = [[token[:max_chars - 2] for token in line.strip().split()]
+                       for line in fin]
+        else:
+            dataset = [line.strip().split() for line in fin]
     dataset = break_sentences(dataset, max_sent_len)
     return dataset
 
@@ -104,3 +101,25 @@ def read_conll_corpus_with_original_text(path: str, max_chars: int = None):
             dataset.append(item)
             raw_dataset.append(raw_item)
     return dataset, raw_dataset
+
+
+if __name__ == "__main__":
+    import time
+    import argparse
+    import pickle
+    cmd = argparse.ArgumentParser()
+    cmd.add_argument('-max_sent_len', default=20, type=int, help='the maximum length of sentence.')
+    cmd.add_argument('-max_chars', help='the maximum chars.')
+    cmd.add_argument('-input', help='the path to the filename.')
+    cmd.add_argument('-output', help='the path to the output')
+    opts = cmd.parse_args()
+
+    start_time = time.time()
+    raw = read_corpus(opts.input, max_sent_len=opts.max_sent_len, max_chars=opts.max_chars)
+    print(time.time() - start_time)
+
+    pickle.dump(raw, file=open(opts.output, 'wb'))
+
+    start_time = time.time()
+    raw2 = pickle.load(open(opts.output, 'rb'))
+    print(time.time() - start_time)

@@ -13,6 +13,7 @@ import logging
 import json
 import torch
 import shutil
+import pickle
 import numpy as np
 from bilm.bilm_base import BiLMBase
 from bilm.io_util import split_train_and_valid, count_tokens, read_corpus
@@ -279,6 +280,7 @@ def train():
     cmd = argparse.ArgumentParser(sys.argv[0], conflict_handler='resolve')
     cmd.add_argument('--seed', default=1, type=int, help='The random seed.')
     cmd.add_argument('--gpu', default=-1, type=int, help='Use id of gpu, -1 if cpu.')
+    cmd.add_argument('--format', default='plain', choices=('plain', 'pickle'), help='the input format.')
     cmd.add_argument('--train_path', required=True, help='The path to the training file.')
     cmd.add_argument('--vocab_path', required=True, help='The path to the vocabulary.')
     cmd.add_argument('--valid_path', help='The path to the development file.')
@@ -335,13 +337,19 @@ def train():
     token_embedder_max_chars = c.get('max_characters_per_token', None)
 
     # Load training data.
-    raw_training_data = read_corpus(opt.train_path, opt.max_sent_len, token_embedder_max_chars)
+    if opt.format == 'plain':
+        raw_training_data = read_corpus(opt.train_path, opt.max_sent_len, token_embedder_max_chars)
+    else:
+        raw_training_data = pickle.load(open(opt.train_path, 'rb'))
     logger.info('training instance: {}, training tokens: {}.'.format(len(raw_training_data),
                                                                      count_tokens(raw_training_data)))
 
     # Load valid data if path is provided, else use 10% of training data as valid data
     if opt.valid_path is not None:
-        raw_valid_data = read_corpus(opt.valid_path, opt.max_sent_len, token_embedder_max_chars)
+        if opt.format == 'plain':
+            raw_valid_data = read_corpus(opt.valid_path, opt.max_sent_len, token_embedder_max_chars)
+        else:
+            raw_valid_data = pickle.load(open(opt.valid_path, 'rb'))
         logger.info('valid instance: {}, valid tokens: {}.'.format(len(raw_valid_data), count_tokens(raw_valid_data)))
     elif opt.valid_size > 0:
         raw_training_data, raw_valid_data = split_train_and_valid(raw_training_data, opt.valid_size)
@@ -353,7 +361,10 @@ def train():
 
     # Load test data if path is provided.
     if opt.test_path is not None:
-        raw_test_data = read_corpus(opt.test_path, opt.max_sent_len, token_embedder_max_chars)
+        if opt.format == 'plain':
+            raw_test_data = read_corpus(opt.test_path, opt.max_sent_len, token_embedder_max_chars)
+        else:
+            raw_test_data = pickle.load(open(opt.test_path, 'rb'))
         logger.info('testing instance: {}, testing tokens: {}.'.format(len(raw_test_data), count_tokens(raw_test_data)))
     else:
         raw_test_data = None

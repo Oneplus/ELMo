@@ -77,16 +77,35 @@ class Model(BiLMBase):
         return self.classify_layer(selected_forward, selected_forward_targets), \
                self.classify_layer(selected_backward, selected_backward_targets)
 
-    def save_model(self, path, save_classify_layer):
-        torch.save(self.token_embedder.state_dict(), os.path.join(path, 'token_embedder.pkl'))
-        torch.save(self.encoder.state_dict(), os.path.join(path, 'encoder.pkl'))
-        if save_classify_layer:
-            torch.save(self.classify_layer.state_dict(), os.path.join(path, 'classifier.pkl'))
+    def save_model(self, dirname: str, save_classify_layer: bool, epoch: int = None):
+        if epoch:
+            token_embedder_path = os.path.join(dirname, 'token_embedder.{}.pkl'.format(epoch))
+            encoder_path = os.path.join(dirname, 'encoder.{}.pkl'.format(epoch))
+            classifier_path = os.path.join(dirname, 'classifier.{}.pkl'.format(epoch))
+        else:
+            token_embedder_path = os.path.join(dirname, 'token_embedder.pkl')
+            encoder_path = os.path.join(dirname, 'encoder.pkl')
+            classifier_path = os.path.join(dirname, 'classifier.pkl')
 
-    def load_model(self, path):
-        self.token_embedder.load_state_dict(torch.load(os.path.join(path, 'token_embedder.pkl')))
-        self.encoder.load_state_dict(torch.load(os.path.join(path, 'encoder.pkl')))
-        self.classify_layer.load_state_dict(torch.load(os.path.join(path, 'classifier.pkl')))
+        torch.save(self.token_embedder.state_dict(), token_embedder_path)
+        torch.save(self.encoder.state_dict(), encoder_path)
+        if save_classify_layer:
+            torch.save(self.classify_layer.state_dict(), classifier_path)
+
+    def load_model(self, dirname: str):
+        self.token_embedder.load_state_dict(torch.load(os.path.join(dirname, 'token_embedder.pkl')))
+        self.encoder.load_state_dict(torch.load(os.path.join(dirname, 'encoder.pkl')))
+        self.classify_layer.load_state_dict(torch.load(os.path.join(dirname, 'classifier.pkl')))
+
+    def create_symbolic_link(self, dirname: str, save_classify_layer: bool, epoch: int):
+        token_embedder_path = os.path.join(dirname, 'token_embedder.{}.pkl'.format(epoch))
+        encoder_path = os.path.join(dirname, 'encoder.{}.pkl'.format(epoch))
+        classifier_path = os.path.join(dirname, 'classifier.{}.pkl'.format(epoch))
+
+        os.symlink(token_embedder_path, os.path.join(dirname, 'token_embedder.pkl'))
+        os.symlink(encoder_path, os.path.join(dirname, 'encoder.pkl'))
+        if save_classify_layer:
+            os.symlink(classifier_path, os.path.join(dirname, 'classifier.pkl'))
 
 
 def eval_model(model: Model,
@@ -197,6 +216,9 @@ def train_model(epoch: int,
                 epoch, step, optimizer.param_groups[0]['lr'],
                 train_ppl, train_fwd_ppl, train_bwd_ppl)
 
+            if opt.always_save:
+                model.save_model(opt.model, opt.save_classify_layer, global_step)
+
             if valid_batch is None:
                 if scheduler:
                     scheduler.step(train_ppl, epoch)
@@ -207,7 +229,10 @@ def train_model(epoch: int,
                     logger.info(log_str)
 
                     improved = True
-                    model.save_model(opt.model, opt.save_classify_layer)
+                    if opt.always_save:
+                        model.create_symbolic_link(opt.model, opt.save_classify_layer, global_step)
+                    else:
+                        model.save_model(opt.model, opt.save_classify_layer)
             else:
                 logger.info(log_str)
                 if train_ppl < best_train:
@@ -221,7 +246,11 @@ def train_model(epoch: int,
 
                 if valid_ppl < best_valid:
                     improved = True
-                    model.save_model(opt.model, opt.save_classify_layer)
+                    if opt.always_save:
+                        model.create_symbolic_link(opt.model, opt.save_classify_layer, global_step)
+                    else:
+                        model.save_model(opt.model, opt.save_classify_layer)
+
                     best_valid = valid_ppl
                     log_str += ' NEW |'
                     logger.info(log_str)
@@ -252,6 +281,8 @@ def train():
     cmd.add_argument('--bucket', action='store_true', default=False, help='do bucket batching.')
     cmd.add_argument('--save_classify_layer', default=False, action='store_true',
                      help="whether to save the classify layer")
+    cmd.add_argument('--always_save', default=False, action='store_true',
+                     help="always saving the model, appending global epoch id.")
     cmd.add_argument('--valid_size', type=int, default=0, help="size of validation dataset when there's no valid.")
     cmd.add_argument('--eval_steps', type=int, help='evaluate every xx batches.')
     cmd.add_argument('--report_steps', type=int, default=32, help='report every xx batches.')

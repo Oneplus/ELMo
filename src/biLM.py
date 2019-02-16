@@ -98,9 +98,9 @@ class Model(BiLMBase):
         self.classify_layer.load_state_dict(torch.load(os.path.join(dirname, 'classifier.pkl')))
 
     def create_symbolic_link(self, dirname: str, save_classify_layer: bool, epoch: int):
-        src_token_embedder_path = os.path.join(dirname, 'token_embedder.{}.pkl'.format(epoch))
-        src_encoder_path = os.path.join(dirname, 'encoder.{}.pkl'.format(epoch))
-        src_classifier_path = os.path.join(dirname, 'classifier.{}.pkl'.format(epoch))
+        src_token_embedder_path = os.path.abspath(os.path.join(dirname, 'token_embedder.{}.pkl'.format(epoch)))
+        src_encoder_path = os.path.abspath(os.path.join(dirname, 'encoder.{}.pkl'.format(epoch)))
+        src_classifier_path = os.path.abspath(os.path.join(dirname, 'classifier.{}.pkl'.format(epoch)))
 
         tgt_token_embedder_path = os.path.join(dirname, 'token_embedder.pkl')
         tgt_encoder_path = os.path.join(dirname, 'encoder.pkl')

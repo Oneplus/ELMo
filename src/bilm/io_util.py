@@ -109,7 +109,7 @@ if __name__ == "__main__":
     import pickle
     cmd = argparse.ArgumentParser()
     cmd.add_argument('-max_sent_len', default=20, type=int, help='the maximum length of sentence.')
-    cmd.add_argument('-max_chars', help='the maximum chars.')
+    cmd.add_argument('-max_chars', type=int, help='the maximum chars.')
     cmd.add_argument('-input', help='the path to the filename.')
     cmd.add_argument('-output', help='the path to the output')
     opts = cmd.parse_args()

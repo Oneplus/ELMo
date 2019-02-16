@@ -396,6 +396,17 @@ def train():
     else:
         char_batch = None
 
+    logger.info('vocab size: {0}'.format(len(vocab_batch.mapping)))
+    n_classes = len(vocab_batch.mapping)
+
+    model = Model(conf, word_batch, char_batch, n_classes)
+
+    logger.info(str(model))
+    if use_cuda:
+        model = model.cuda()
+        if use_fp16:
+            model = model.half()
+
     # Create training batch
     if opt.bucket:
         training_batcher = BucketBatcher(raw_training_data, word_batch, char_batch, vocab_batch, opt.batch_size)
@@ -421,17 +432,6 @@ def train():
                                opt.batch_size, keep_full=True, sorting=True, shuffle=False)
     else:
         test_batcher = None
-
-    logger.info('vocab size: {0}'.format(len(vocab_batch.mapping)))
-    n_classes = len(vocab_batch.mapping)
-
-    model = Model(conf, word_batch, char_batch, n_classes)
-
-    logger.info(str(model))
-    if use_cuda:
-        model = model.cuda()
-        if use_fp16:
-            model = model.half()
 
     # Save meta data of
     try:

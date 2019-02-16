@@ -98,14 +98,24 @@ class Model(BiLMBase):
         self.classify_layer.load_state_dict(torch.load(os.path.join(dirname, 'classifier.pkl')))
 
     def create_symbolic_link(self, dirname: str, save_classify_layer: bool, epoch: int):
-        token_embedder_path = os.path.join(dirname, 'token_embedder.{}.pkl'.format(epoch))
-        encoder_path = os.path.join(dirname, 'encoder.{}.pkl'.format(epoch))
-        classifier_path = os.path.join(dirname, 'classifier.{}.pkl'.format(epoch))
+        src_token_embedder_path = os.path.join(dirname, 'token_embedder.{}.pkl'.format(epoch))
+        src_encoder_path = os.path.join(dirname, 'encoder.{}.pkl'.format(epoch))
+        src_classifier_path = os.path.join(dirname, 'classifier.{}.pkl'.format(epoch))
 
-        os.symlink(token_embedder_path, os.path.join(dirname, 'token_embedder.pkl'))
-        os.symlink(encoder_path, os.path.join(dirname, 'encoder.pkl'))
+        tgt_token_embedder_path = os.path.join(dirname, 'token_embedder.pkl')
+        tgt_encoder_path = os.path.join(dirname, 'encoder.pkl')
+        tgt_classifier_path = os.path.join(dirname, 'classifier.pkl')
+
+        if os.path.lexists(tgt_token_embedder_path):
+            os.remove(tgt_token_embedder_path)
+        if os.path.lexists(tgt_encoder_path):
+            os.remove(tgt_encoder_path)
+        if os.path.lexists(tgt_classifier_path):
+            os.remove(tgt_classifier_path)
+        os.symlink(src_token_embedder_path, tgt_token_embedder_path)
+        os.symlink(src_encoder_path, tgt_encoder_path)
         if save_classify_layer:
-            os.symlink(classifier_path, os.path.join(dirname, 'classifier.pkl'))
+            os.symlink(src_classifier_path, tgt_classifier_path)
 
 
 def eval_model(model: Model,

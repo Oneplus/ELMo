@@ -70,3 +70,6 @@ class ConvTokenEmbedder(InputEmbedderBase):
 
     def get_embed_dim(self):
         return self.output_dim
+
+    def get_output_dim(self):
+        return self.output_dim

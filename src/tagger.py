@@ -141,8 +141,7 @@ class SeqLabelModel(torch.nn.Module):
         input_encoders = []
         input_dim = 0
         for i, c in enumerate(conf['input_encoder']):
-            input_info = {name: [entry['dim'] for entry in conf['input'] if entry['name'] == name][0]
-                          for name in c['input']}
+            input_info = {name: self.input_layers[name].get_output_dim() for name in c['input']}
 
             if c['type'] == 'affine':
                 input_encoder = AffineTransformInputEncoder(input_info, c['dim'], use_cuda)

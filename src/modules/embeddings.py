@@ -3,7 +3,7 @@ import logging
 import codecs
 import numpy as np
 import gzip
-logging.basicConfig(level=logging.INFO, format='%(asctime)-15s %(levelname)s: %(message)s')
+logger = logging.getLogger(__name__)
 
 
 class Embeddings(torch.nn.Module):
@@ -16,7 +16,7 @@ class Embeddings(torch.nn.Module):
             #  assert word not in word2id, "Duplicate words in pre-trained embeddings"
             #  word2id[word] = len(word2id)
 
-            logging.info("{} pre-trained word embeddings loaded.".format(len(word2id)))
+            logging.info("{} word embeddings to be initialized.".format(len(word2id)))
             if n_d != len(embvecs[0]):
                 logging.warning("[WARNING] n_d ({}) != word vector size ({}). Use {} for embeddings.".format(
                     n_d, len(embvecs[0]), len(embvecs[0])))

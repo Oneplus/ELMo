@@ -381,6 +381,7 @@ def train():
                                lower=not c.get('word_cased', True),
                                add_sentence_boundary=c.get('add_sentence_boundary_ids', False),
                                use_cuda=use_cuda)
+        word_batch.create_dict_from_dataset(raw_training_data)
     else:
         word_batch = None
 

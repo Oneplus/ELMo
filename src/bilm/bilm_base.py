@@ -2,6 +2,7 @@
 from typing import Dict
 import torch
 import math
+import logging
 from .batch import WordBatch, CharacterBatch
 from .token_embedder import ConvTokenEmbedder, LstmTokenEmbedder
 from .lstm import LstmbiLm
@@ -11,6 +12,7 @@ from .self_attn import SelfAttentiveLBLBiLM, SelfAttentiveLBLBiLMV2
 from allennlp.modules.elmo_lstm import ElmoLstm
 from allennlp.nn.util import get_mask_from_sequence_lengths
 from modules.embeddings import Embeddings, load_embedding_txt
+logger = logging.getLogger(__name__)
 
 
 class BiLMBase(torch.nn.Module):

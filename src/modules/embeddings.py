@@ -33,8 +33,13 @@ class Embeddings(torch.nn.Module):
         self.embedding.weight.data.uniform_(-scale, scale)
 
         if embs is not None:
+            emb_words, emb_vecs = embs
             weight = self.embedding.weight
-            weight.data[:len(embwords)].copy_(torch.from_numpy(embvecs))
+            for emb_word, emb_vec in zip(emb_words, emb_vecs):
+                if emb_word not in word2id:
+                    continue
+                i = word2id[emb_word]
+                weight.data[i].copy_(torch.from_numpy(emb_vec))
             logging.info("embedding shape: {}".format(weight.size()))
 
         if normalize:

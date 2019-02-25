@@ -10,7 +10,7 @@ from .lbl import LBLHighwayBiLm, LBLHighwayBiLmV2, LBLResNetBiLm
 from .self_attn import SelfAttentiveLBLBiLM, SelfAttentiveLBLBiLMV2
 from allennlp.modules.elmo_lstm import ElmoLstm
 from allennlp.nn.util import get_mask_from_sequence_lengths
-from modules.embeddings import Embeddings
+from modules.embeddings import Embeddings, load_embedding_txt
 
 
 class BiLMBase(torch.nn.Module):
@@ -22,7 +22,12 @@ class BiLMBase(torch.nn.Module):
 
         c = conf['token_embedder']
         if word_batch is not None:
-            word_embedder = Embeddings(c['word_dim'], word_batch.mapping, embs=None, fix_emb=False, normalize=False)
+            if 'pretrained' in c:
+                embs = load_embedding_txt(c['pretrained'], c['has_header'])
+                logger.info('loaded {0} embedding entries.'.format(len(embs[0])))
+            else:
+                embs = None
+            word_embedder = Embeddings(c['word_dim'], word_batch.mapping, embs=embs, fix_emb=False, normalize=False)
         else:
             word_embedder = None
 

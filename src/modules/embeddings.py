@@ -16,9 +16,9 @@ class Embeddings(torch.nn.Module):
             #  assert word not in word2id, "Duplicate words in pre-trained embeddings"
             #  word2id[word] = len(word2id)
 
-            logging.info("{} word embeddings to be initialized.".format(len(word2id)))
+            logger.info("{} word embeddings to be initialized.".format(len(word2id)))
             if n_d != len(embvecs[0]):
-                logging.warning("[WARNING] n_d ({}) != word vector size ({}). Use {} for embeddings.".format(
+                logger.warning("[WARNING] n_d ({}) != word vector size ({}). Use {} for embeddings.".format(
                     n_d, len(embvecs[0]), len(embvecs[0])))
                 n_d = len(embvecs[0])
 
@@ -40,7 +40,7 @@ class Embeddings(torch.nn.Module):
                     continue
                 i = word2id[emb_word]
                 weight.data[i].copy_(torch.from_numpy(emb_vec))
-            logging.info("embedding shape: {}".format(weight.size()))
+            logger.info("embedding shape: {}".format(weight.size()))
 
         if normalize:
             weight = self.embedding.weight
@@ -69,14 +69,22 @@ def load_embedding_txt(path: str, has_header: bool):
     if path.endswith('.gz'):
         fin = gzip.open(path, 'rb')
     else:
-        fin = codecs.open(path, 'r', encoding='utf-8')
+        fin = codecs.open(path, 'r', encoding='utf-8', errors='ignore')
     if has_header:
         fin.readline()
 
+    dim = None
+    cnt = 0
     for line in fin:
+        cnt += 1
         line = line.strip()
         if line:
             parts = line.split()
+            if dim is None:
+                dim = len(parts[1:])
+            elif dim != len(parts[1:]):
+                logger.info('unequal number of fields in line {}: {}, expected {}'.format(cnt, len(parts[1:]), dim))
+                continue
             words.append(parts[0])
             vals += [float(x) for x in parts[1:]]  # equal to append
     return words, np.asarray(vals).reshape(len(words), -1)  # reshape

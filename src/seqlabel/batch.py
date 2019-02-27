@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-from typing import List, Tuple, Dict, Union
+from typing import List, Tuple, Dict, Union, Any
 import random
 import torch
 import logging
@@ -49,12 +49,36 @@ class TagBatch(object):
             batch = batch.cuda()
         return batch
 
+    def numericalize(self, input_data: List[Tuple[str]]):
+        seq_len = len(input_data)
+        ret = torch.LongTensor(seq_len).fill_(0)
+        for i, fields in enumerate(input_data):
+            tag = fields[self.field]
+            ret[i] = self.mapping.get(tag, 0)
+        return ret
+
+    def fusion(self, package: List[torch.Tensor]):
+        batch_size = len(package)
+        seq_len = max([data.size(0) for data in package])
+        batch = package[0].new_zeros(batch_size, seq_len)
+        for i, data in enumerate(package):
+            batch[i, : data.size(0)] = data
+        if self.use_cuda:
+            batch = batch.cuda()
+        return batch
+
 
 class InputBatchBase(object):
     def __init__(self, use_cuda: bool):
         self.use_cuda = use_cuda
 
     def create_one_batch(self, input_dataset_: List[List[Tuple[str]]]):
+        raise NotImplementedError()
+
+    def numericalize(self, input_data: List[Tuple[str]]):
+        raise NotImplementedError()
+
+    def fusion(self, package: List[Any]):
         raise NotImplementedError()
 
     def get_field(self):
@@ -84,6 +108,26 @@ class WordBatch(InputBatchBase, SpecialToken):
                 if self.lower:
                     word = word.lower()
                 batch[i, j] = self.mapping.get(word, self.oov_id)
+        if self.use_cuda:
+            batch = batch.cuda()
+        return batch
+
+    def numericalize(self, input_data: List[Tuple[str]]):
+        seq_len = len(input_data)
+        ret = torch.LongTensor(seq_len).fill_(self.pad_id)
+        for i, fields in enumerate(input_data):
+            word = fields[self.field]
+            if self.lower:
+                word = word.lower()
+            ret[i] = self.mapping.get(word, self.oov_id)
+        return ret
+
+    def fusion(self, package: List[torch.Tensor]):
+        batch_size = len(package)
+        seq_len = max([data.size(0) for data in package])
+        batch = package[0].new_zeros(batch_size, seq_len).fill_(self.pad_id)
+        for i, data in enumerate(package):
+            batch[i, : data.size(0)] = data
         if self.use_cuda:
             batch = batch.cuda()
         return batch
@@ -156,6 +200,36 @@ class CharacterBatch(InputBatchBase, SpecialToken):
             lengths = lengths.cuda()
         return batch, lengths
 
+    def numericalize(self, input_data: List[Tuple[str]]):
+        seq_len = len(input_data)
+        max_char_len = max([len(fields[self.field]) for fields in input_data])
+        ret = torch.LongTensor(seq_len, max_char_len).fill_(self.pad_id)
+        lengths = torch.LongTensor(seq_len).fill_(1)
+        for i, fields in enumerate(input_data):
+            field = fields[self.field]
+            if self.lower:
+                field = field.lower()
+            lengths[i] = len(field)
+            for j, key in enumerate(field):
+                ret[i, j] = self.mapping.get(key, self.oov_id)
+        return ret, lengths
+
+    def fusion(self, package: List[Tuple[torch.Tensor, torch.Tensor]]):
+        batch_size = len(package)
+        seq_len = max([data.size(0) for data, _ in package])
+        max_char_len = max([data.size(1) for data, _ in package])
+
+        batch = torch.LongTensor(batch_size, seq_len, max_char_len).fill_(self.pad_id)
+        lengths = torch.LongTensor(batch_size, seq_len).fill_(1)
+
+        for i, (data, one_length) in enumerate(package):
+            batch[i, :data.size(0), : data.size(1)] = data
+            lengths[i, :one_length.size(0)] = one_length
+        if self.use_cuda:
+            batch = batch.cuda()
+            lengths = lengths.cuda()
+        return batch, lengths
+
     def get_field(self):
         return self.field
 
@@ -187,6 +261,12 @@ class LengthBatch(InputBatchBase):
             batch = batch.cuda()
         return batch
 
+    def numericalize(self, input_data: List[Tuple[str]]):
+        return len(input_data)
+
+    def fusion(self, package: List[int]):
+        return torch.LongTensor(package)
+
     def get_field(self):
         return None
 
@@ -205,6 +285,12 @@ class TextBatch(InputBatchBase):
                 batch[i].append(word)
         return batch
 
+    def numericalize(self, input_data: List[Tuple[str]]):
+        return [fields[self.field] for fields in input_data]
+
+    def fusion(self, package: List[List[Tuple[str]]]):
+        return package
+
     def get_field(self):
         return None
 
@@ -214,28 +300,50 @@ class BatcherBase(object):
                  input_batchers: Dict[str, InputBatchBase],
                  tag_batchers: TagBatch,
                  batch_size: int,
-                 use_cuda: bool):
+                 use_cuda: bool,
+                 caching: bool = False):
         self.raw_dataset = raw_dataset
         self.input_batches = input_batchers
         self.tag_batcher = tag_batchers
         self.batch_size = batch_size
         self.use_cuda = use_cuda
+        self.caching = caching
+
+        if caching:
+            self.cached_inputs, self.cached_targets = self.cache_dataset()
 
         self.batch_indices = []
 
     def reset_batch_indices(self):
         raise NotImplementedError
 
+    def cache_dataset(self):
+        cached_inputs = []
+        cached_targets = []
+        for data in self.raw_dataset:
+            cached_targets.append(self.tag_batcher.numericalize(data))
+            inputs = {}
+            for name, input_batch in self.input_batches.items():
+                inputs[name] = input_batch.numericalize(data)
+            cached_inputs.append(inputs)
+        return cached_inputs, cached_targets
+
     def get(self):
         self.reset_batch_indices()
 
         for one_batch_indices in self.batch_indices:
-            data_in_one_batch = [self.raw_dataset[i] for i in one_batch_indices]
+            if self.caching:
+                targets = self.tag_batcher.fusion([self.cached_targets[i] for i in one_batch_indices])
+                inputs = {}
+                for name, input_batch in self.input_batches.items():
+                    inputs[name] = input_batch.fusion([self.cached_inputs[i][name] for i in one_batch_indices])
+            else:
+                data_in_one_batch = [self.raw_dataset[i] for i in one_batch_indices]
 
-            targets = self.tag_batcher.create_one_batch(data_in_one_batch)
-            inputs = {}
-            for name, input_batch in self.input_batches.items():
-                inputs[name] = input_batch.create_one_batch(data_in_one_batch)
+                targets = self.tag_batcher.create_one_batch(data_in_one_batch)
+                inputs = {}
+                for name, input_batch in self.input_batches.items():
+                    inputs[name] = input_batch.create_one_batch(data_in_one_batch)
 
             yield inputs, targets, one_batch_indices
 
@@ -256,7 +364,7 @@ class Batcher(BatcherBase):
                  keep_full: bool = False,
                  use_cuda: bool = False):
         super(Batcher, self).__init__(raw_dataset, input_batchers, tag_batcher,
-                                      batch_size, use_cuda)
+                                      batch_size, use_cuda, caching=True)
         self.shuffle = shuffle
         self.sorting = sorting
         self.keep_full = keep_full
@@ -300,7 +408,7 @@ class BucketBatcher(BatcherBase):
                  n_buckets: int = 10,
                  use_cuda: bool = False):
         super(BucketBatcher, self).__init__(raw_dataset, input_batchers, tag_batcher,
-                                            batch_size, use_cuda)
+                                            batch_size, use_cuda, caching=True)
         lengths = [[len(data)] for data in raw_dataset]
         kmeans = KMeans(n_buckets, random_state=0).fit(np.array(lengths, dtype=np.int))
         self.n_buckets = n_buckets

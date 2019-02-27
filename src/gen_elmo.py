@@ -106,7 +106,7 @@ def test_main():
     if use_cuda:
         model.cuda()
 
-    logging.info(str(model))
+    logger.info(str(model))
     model.load_model(args.model)
 
     # read test data according to input format
@@ -186,7 +186,7 @@ def test_main():
 
             cnt += 1
             if cnt % 1000 == 0:
-                logging.info('Finished {0} sentences.'.format(cnt))
+                logger.info('Finished {0} sentences.'.format(cnt))
     for _, handler in handlers.items():
         handler.close()
 

@@ -265,7 +265,10 @@ class LengthBatch(InputBatchBase):
         return len(input_data)
 
     def fusion(self, package: List[int]):
-        return torch.LongTensor(package)
+        batch = torch.LongTensor(package)
+        if self.use_cuda:
+            batch = batch.cuda()
+        return batch
 
     def get_field(self):
         return None

@@ -53,7 +53,7 @@ def read_conllu_dataset(path: str):
             for line in lines:
                 if line.startswith('#'):
                     continue
-                fields = tuple(line.strip().split())
+                fields = tuple(line.strip().split('\t'))
                 if '.' in fields[0] or '-' in fields[0]:
                     continue
                 items.append(fields)

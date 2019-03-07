@@ -144,3 +144,60 @@ class ConvTokenEmbedder(TokenEmbedderBase):
         token_embedding = torch.cat(embs, dim=2)
 
         return self.projection(token_embedding)
+
+
+class RecursiveCell(torch.nn.Module):
+    def __init__(self, dim):
+        super(RecursiveCell, self).__init__()
+        self.dim = dim
+        self.gate = torch.nn.Linear(dim * 2, dim * 3)
+        self.project = torch.nn.Linear(dim * 2, dim)
+
+    def forward(self, input_: torch.Tensor) -> torch.Tensor:
+        batch_size = input_.size(0)
+        flattened_input_ = input_.contiguous().view(batch_size, -1)
+
+        z = self.project(flattened_input_).view(batch_size, 1, -1)
+        stacked_input_ = torch.cat([input_, z], dim=1)
+        g = self.gate(flattened_input_).view(batch_size, 3, -1)
+        g = torch.nn.functional.softmax(g, dim=1)
+        ret = stacked_input_.mul(g).sum(dim=1)
+        return ret
+
+
+class GatedRecNNTokenEmbedder(TokenEmbedderBase):
+    def __init__(self, output_dim: int,
+                 word_embedder: Embeddings,
+                 char_embedder: Embeddings):
+        super(GatedRecNNTokenEmbedder, self).__init__(output_dim, word_embedder, char_embedder)
+        if char_embedder is not None:
+            self.cell = RecursiveCell(char_embedder.get_output_dim())
+
+    def forward(self, word_inputs: torch.Tensor,
+                char_inputs: torch.Tensor):
+        embs = []
+        if self.word_embedder is not None:
+            word_inputs = torch.autograd.Variable(word_inputs, requires_grad=False)
+            embed_words = self.word_embedder(word_inputs)
+            embs.append(embed_words)
+
+        if self.char_embedder is not None:
+            char_inputs, char_lengths = char_inputs
+            batch_size, seq_len = char_lengths.size()[:2]
+            char_inputs = char_inputs.view(batch_size * seq_len, -1)
+
+            # (batch_size * seq_len, max_char, dim)
+            embeded_chars = self.char_embedder(char_inputs)
+            _, max_seq_len, dim = embeded_chars.size()
+
+            layer = embeded_chars
+            for length in range(1, max_seq_len):
+                new_layer = layer.new_zeros(layer.size())
+                for i in range(length):
+                    new_layer[:, i, :] = self.cell(new_layer[:, i: i + 2, :])
+                layer = new_layer
+            embs.append(layer.view(batch_size, seq_len, dim))
+
+        token_embedding = torch.cat(embs, dim=2)
+
+        return self.projection(token_embedding)

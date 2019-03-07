@@ -18,7 +18,7 @@ import numpy as np
 from bilm.bilm_base import BiLMBase
 from bilm.io_util import split_train_and_valid, count_tokens, read_corpus
 from bilm.io_util import dict2namedtuple
-from bilm.batch import BatcherBase, Batcher, BucketBatcher, WordBatch, CharacterBatch, VocabBatch
+from bilm.batch import BatcherBase, Batcher, BucketBatcher, WordBatch, WordPieceBatch, CharacterBatch, VocabBatch
 from modules.softmax_loss import SoftmaxLoss
 from modules.window_sampled_softmax_loss import WindowSampledSoftmaxLoss
 from modules.window_sampled_cnn_softmax_loss import WindowSampledCNNSoftmaxLoss
@@ -385,14 +385,22 @@ def train():
     else:
         word_batch = None
 
-    # Character
-    if c.get('char_dim', 0) > 0:
+    # SubToken
+    if c.get('char_dim', 0) > 0 or c.get('wordpiece_dim', 0) > 0:
         min_char = max([w for w, _ in c['filters']]) if c['name'] == 'cnn' else 1
-        char_batch = CharacterBatch(min_char=min_char,
-                                    lower=not c.get('char_cased', True),
-                                    add_sentence_boundary=c.get('add_sentence_boundary_ids', False),
-                                    add_word_boundary=c.get('add_word_boundary_ids', False),
-                                    use_cuda=use_cuda)
+        if c.get('char_dim', 0) > 0:
+            char_batch = CharacterBatch(min_char=min_char,
+                                        lower=not c.get('char_cased', True),
+                                        add_sentence_boundary=c.get('add_sentence_boundary_ids', False),
+                                        add_word_boundary=c.get('add_word_boundary_ids', False),
+                                        use_cuda=use_cuda)
+        else:
+            char_batch = WordPieceBatch(min_char=min_char,
+                                        vocab_file=c['wordpiece_vocab'],
+                                        lower=not c.get('word_cased', True),
+                                        add_sentence_boundary=c.get('add_sentence_boundary_ids', False),
+                                        add_word_boundary=c.get('add_word_boundary_ids', False),
+                                        use_cuda=use_cuda)
         char_batch.create_dict_from_dataset(raw_training_data)
     else:
         char_batch = None
@@ -410,10 +418,11 @@ def train():
 
     # Create training batch
     if opt.bucket:
-        training_batcher = BucketBatcher(raw_training_data, word_batch, char_batch, vocab_batch, opt.batch_size)
+        training_batcher = BucketBatcher(raw_training_data, word_batch, char_batch,
+                                         vocab_batch, opt.batch_size)
     else:
-        training_batcher = Batcher(raw_training_data, word_batch, char_batch, vocab_batch, opt.batch_size,
-                                   keep_full=False, sorting=True, shuffle=True)
+        training_batcher = Batcher(raw_training_data, word_batch, char_batch,
+                                   vocab_batch, opt.batch_size, keep_full=False, sorting=True, shuffle=True)
 
     # Set up evaluation steps.
     if opt.eval_steps is None:
@@ -441,12 +450,12 @@ def train():
         if exception.errno != errno.EEXIST:
             raise
 
-    if c.get('char_dim', 0) > 0:
+    if char_batch is not None:
         with codecs.open(os.path.join(opt.model, 'char.dic'), 'w', encoding='utf-8') as fpo:
             for ch, i in char_batch.mapping.items():
                 print('{0}\t{1}'.format(ch, i), file=fpo)
 
-    if c.get('word_dim', 0) > 0:
+    if word_batch is not None:
         with codecs.open(os.path.join(opt.model, 'word.dic'), 'w', encoding='utf-8') as fpo:
             for w, i in word_batch.mapping.items():
                 print('{0}\t{1}'.format(w, i), file=fpo)
@@ -540,13 +549,21 @@ def test():
             vocab_batch.mapping[token] = int(i)
 
     c = conf['token_embedder']
-    if c['char_dim'] > 0:
+    if c['char_dim'] > 0 or c['wordpiece_dim'] > 0:
         min_char = max([w for w, _ in c['filters']]) if c['name'] == 'cnn' else 1
-        char_batch = CharacterBatch(min_char=min_char,
-                                    lower=not c.get('char_cased', True),
-                                    add_sentence_boundary=c.get('add_sentence_boundary_ids', False),
-                                    add_word_boundary=c.get('add_word_boundary_ids', False),
-                                    use_cuda=use_cuda)
+        if c['char_dim'] > 0:
+            char_batch = CharacterBatch(min_char=min_char,
+                                        lower=not c.get('char_cased', True),
+                                        add_sentence_boundary=c.get('add_sentence_boundary_ids', False),
+                                        add_word_boundary=c.get('add_word_boundary_ids', False),
+                                        use_cuda=use_cuda)
+        else:
+            char_batch = WordPieceBatch(min_char=min_char,
+                                        vocab_file=c['wordpiece_vocab'],
+                                        lower=not c.get('char_cased', True),
+                                        add_sentence_boundary=c.get('add_sentence_boundary_ids', False),
+                                        add_word_boundary=c.get('add_word_boundary_ids', False),
+                                        use_cuda=use_cuda)
         with codecs.open(os.path.join(args.model, 'char.dic'), 'r', encoding='utf-8') as fpi:
             for line in fpi:
                 tokens = line.strip().split('\t')

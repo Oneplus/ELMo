@@ -4,7 +4,7 @@ import torch
 import math
 import logging
 from .batch import WordBatch, CharacterBatch
-from .token_embedder import ConvTokenEmbedder, LstmTokenEmbedder
+from .token_embedder import ConvTokenEmbedder, LstmTokenEmbedder, GatedRecNNTokenEmbedder
 from .lstm import LstmbiLm
 from .bengio03 import Bengio03HighwayBiLmV2, Bengio03HighwayBiLm, Bengio03ResNetBiLm
 from .lbl import LBLHighwayBiLm, LBLHighwayBiLmV2, LBLResNetBiLm
@@ -34,7 +34,8 @@ class BiLMBase(torch.nn.Module):
             word_embedder = None
 
         if char_batch is not None:
-            char_embedder = Embeddings(c['char_dim'], char_batch.mapping, embs=None, fix_emb=False, normalize=False)
+            dim = c.get('char_dim') if c.get('char_dim', 0) > 0 else c.get('wordpiece_dim')
+            char_embedder = Embeddings(dim, char_batch.mapping, embs=None, fix_emb=False, normalize=False)
         else:
             char_embedder = None
 
@@ -51,6 +52,10 @@ class BiLMBase(torch.nn.Module):
                                                     word_embedder=word_embedder,
                                                     char_embedder=char_embedder,
                                                     dropout=conf['dropout'])
+        elif token_embedder_name == 'grnn':
+            self.token_embedder = GatedRecNNTokenEmbedder(output_dim=conf['encoder']['projection_dim'],
+                                                          word_embedder=word_embedder,
+                                                          char_embedder=char_embedder)
         else:
             raise ValueError('Unknown token embedder name: {}'.format(token_embedder_name))
 

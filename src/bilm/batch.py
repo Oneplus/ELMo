@@ -8,6 +8,7 @@ import random
 import re
 import numpy as np
 from sklearn.cluster import KMeans
+from pytorch_pretrained_bert.tokenization import load_vocab, WordpieceTokenizer
 logger = logging.getLogger(__name__)
 
 
@@ -107,7 +108,8 @@ class LengthBatch(InputBatchBase):
 
 class WordBatch(InputBatchBase, SpecialTokens):
 
-    def __init__(self, min_cut: int, lower: bool,
+    def __init__(self, min_cut: int,
+                 lower: bool,
                  add_sentence_boundary: bool,
                  use_cuda: bool):
         super(WordBatch, self).__init__(use_cuda)
@@ -221,6 +223,84 @@ class CharacterBatch(InputBatchBase, SpecialTokens):
                 for key in word:
                     if key not in self.mapping:
                         self.mapping[key] = len(self.mapping)
+                        n_entries += 1
+        logger.info('+ loaded {0} entries from input'.format(n_entries))
+        logger.info('+ current number of entries in mapping is: {0}'.format(len(self.mapping)))
+
+
+class WordPieceBatch(CharacterBatch, SpecialTokens):
+    def __init__(self, min_char: int,
+                 vocab_file: str,
+                 lower: bool,
+                 add_sentence_boundary: bool,
+                 add_word_boundary: bool,
+                 use_cuda: bool):
+        super(WordPieceBatch, self).__init__(min_char=min_char, lower=lower,
+                                             add_sentence_boundary=add_sentence_boundary,
+                                             add_word_boundary=add_word_boundary, use_cuda=use_cuda)
+        self.vocab = load_vocab(vocab_file=vocab_file)
+        self.tokenizer = WordpieceTokenizer(vocab=self.vocab)
+
+    def create_one_batch(self, raw_dataset: List[List[str]]):
+        batch_size = len(raw_dataset)
+        seq_len = max([len(input_) for input_ in raw_dataset])
+        if self.add_sentence_boundary:
+            seq_len += 2
+
+        sub_tokens = []
+        for raw_data in raw_dataset:
+            item = []
+            for token in raw_data:
+                if self.lower:
+                    token = token.lower()
+                item.append(self.tokenizer.tokenize(token))
+            sub_tokens.append(item)
+        max_char_len = max([len(token) for item in sub_tokens for token in item])
+        max_char_len = max(max_char_len, self.min_char)
+        if self.add_word_boundary:
+            max_char_len += 2
+
+        batch = torch.LongTensor(batch_size, seq_len, max_char_len).fill_(self.pad_id)
+        lengths = torch.LongTensor(batch_size, seq_len).fill_(1)
+        for i, item in enumerate(sub_tokens):
+            if self.add_sentence_boundary:
+                item = [self.bos] + item + [self.eos]
+            for j, token in enumerate(item):
+                if self.add_sentence_boundary and (token == self.bos or token == self.eos):
+                    if self.add_word_boundary:
+                        lengths[i, j] = 3
+                        batch[i, j, 0] = self.mapping.get(self.bow)
+                        batch[i, j, 1] = self.mapping.get(token)
+                        batch[i, j, 2] = self.mapping.get(self.eow)
+                    else:
+                        lengths[i, j] = 1
+                        batch[i, j, 0] = self.mapping.get(token)
+                else:
+                    if self.add_word_boundary:
+                        lengths[i, j] = len(token) + 2
+                        batch[i, j, 0] = self.mapping.get(self.bow)
+                        for k, sub_token in enumerate(token):
+                            batch[i, j, k + 1] = self.mapping.get(sub_token, self.oov_id)
+                        batch[i, j, len(token) + 1] = self.mapping.get(self.eow)
+                    else:
+                        lengths[i, j] = len(token)
+                        for k, sub_token in enumerate(token):
+                            batch[i, j, k] = self.mapping.get(sub_token, self.oov_id)
+
+        if self.use_cuda:
+            batch = batch.cuda()
+            lengths = lengths.cuda()
+        return batch, lengths
+
+    def create_dict_from_dataset(self, raw_dataset: List[List[str]]):
+        n_entries = 0
+        for raw_data in raw_dataset:
+            for token in raw_data:
+                if self.lower:
+                    token = token.lower()
+                for sub_token in self.tokenizer.tokenize(token):
+                    if sub_token not in self.mapping:
+                        self.mapping[sub_token] = len(self.mapping)
                         n_entries += 1
         logger.info('+ loaded {0} entries from input'.format(n_entries))
         logger.info('+ current number of entries in mapping is: {0}'.format(len(self.mapping)))

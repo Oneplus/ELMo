@@ -5,6 +5,7 @@ import torch
 from modules.embeddings import Embeddings
 from allennlp.modules.highway import Highway
 from allennlp.nn.util import get_mask_from_sequence_lengths, masked_softmax
+from allennlp.nn.util import get_range_vector, get_device_of
 from allennlp.nn.activations import Activation
 
 
@@ -170,8 +171,14 @@ class GatedRecNNTokenEmbedder(TokenEmbedderBase):
                  word_embedder: Embeddings,
                  char_embedder: Embeddings):
         super(GatedRecNNTokenEmbedder, self).__init__(output_dim, word_embedder, char_embedder)
+        self.emb_dim = 0
+        if word_embedder is not None:
+            self.emb_dim += word_embedder.get_output_dim()
         if char_embedder is not None:
             self.cell = RecursiveCell(char_embedder.get_output_dim())
+            self.emb_dim += char_embedder.get_output_dim()
+
+        self.projection = torch.nn.Linear(self.emb_dim, self.output_dim, bias=True)
 
     def forward(self, word_inputs: torch.Tensor,
                 char_inputs: torch.Tensor):
@@ -185,6 +192,7 @@ class GatedRecNNTokenEmbedder(TokenEmbedderBase):
             char_inputs, char_lengths = char_inputs
             batch_size, seq_len = char_lengths.size()[:2]
             char_inputs = char_inputs.view(batch_size * seq_len, -1)
+            char_lengths = char_lengths.view(batch_size * seq_len, -1)
 
             # (batch_size * seq_len, max_char, dim)
             embeded_chars = self.char_embedder(char_inputs)
@@ -193,10 +201,12 @@ class GatedRecNNTokenEmbedder(TokenEmbedderBase):
             layer = embeded_chars
             for length in range(1, max_seq_len):
                 new_layer = layer.new_zeros(layer.size())
+                range_vector = get_range_vector(max_seq_len, get_device_of(char_lengths))
+                mask = ((range_vector.unsqueeze(0) - char_lengths) > 0).unsqueeze(-1)
                 for i in range(length):
-                    new_layer[:, i, :] = self.cell(new_layer[:, i: i + 2, :])
-                layer = new_layer
-            embs.append(layer.view(batch_size, seq_len, dim))
+                    new_layer[:, i, :] = self.cell(layer[:, i: i + 2, :])
+                layer.masked_scatter_(mask, new_layer)
+            embs.append(layer[:, 0, :].view(batch_size, seq_len, dim))
 
         token_embedding = torch.cat(embs, dim=2)
 

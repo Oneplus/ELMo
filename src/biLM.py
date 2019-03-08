@@ -3,6 +3,7 @@ from __future__ import print_function
 from __future__ import unicode_literals
 from typing import Dict, List, Tuple
 import os
+import socket
 import errno
 import sys
 import codecs
@@ -305,8 +306,9 @@ def train():
         conf = json.load(fin)
 
     # Dump configurations
-    print(opt)
-    print(conf)
+    logger.info('hostname: {}'.format(socket.gethostname()))
+    logger.info('cmd opt: {}'.format(opt))
+    logger.info('model configuration: {}'.format(conf))
 
     # Set seed.
     torch.manual_seed(opt.seed)

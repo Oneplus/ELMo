@@ -52,7 +52,7 @@ class BiLMBase(torch.nn.Module):
                                                     word_embedder=word_embedder,
                                                     char_embedder=char_embedder,
                                                     dropout=conf['dropout'])
-        elif token_embedder_name == 'grnn':
+        elif token_embedder_name == 'grecnn':
             self.token_embedder = GatedRecNNTokenEmbedder(output_dim=conf['encoder']['projection_dim'],
                                                           word_embedder=word_embedder,
                                                           char_embedder=char_embedder)

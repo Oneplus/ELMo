@@ -202,7 +202,7 @@ class GatedRecNNTokenEmbedder(TokenEmbedderBase):
             for length in range(1, max_seq_len):
                 new_layer = layer.new_zeros(layer.size())
                 range_vector = get_range_vector(max_seq_len, get_device_of(char_lengths))
-                mask = ((range_vector.unsqueeze(0) - char_lengths) > 0).unsqueeze(-1)
+                mask = ((range_vector.unsqueeze(0) - char_lengths + length) <= 0).unsqueeze(-1)
                 for i in range(length):
                     new_layer[:, i, :] = self.cell(layer[:, i: i + 2, :])
                 layer.masked_scatter_(mask, new_layer)

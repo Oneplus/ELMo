@@ -4,7 +4,7 @@ import torch
 import math
 import logging
 from .batch import WordBatch, CharacterBatch
-from .token_embedder import ConvTokenEmbedder, LstmTokenEmbedder, GatedRecNNTokenEmbedder
+from .token_embedder import ConvTokenEmbedder, LstmTokenEmbedder, GatedRecNNTokenEmbedder, SumTokenEmbedder
 from .lstm import LstmbiLm
 from .bengio03 import Bengio03HighwayBiLmV2, Bengio03HighwayBiLm, Bengio03ResNetBiLm
 from .lbl import LBLHighwayBiLm, LBLHighwayBiLmV2, LBLResNetBiLm
@@ -56,6 +56,10 @@ class BiLMBase(torch.nn.Module):
             self.token_embedder = GatedRecNNTokenEmbedder(output_dim=conf['encoder']['projection_dim'],
                                                           word_embedder=word_embedder,
                                                           char_embedder=char_embedder)
+        elif token_embedder_name == 'sum':
+            self.token_embedder = SumTokenEmbedder(output_dim=conf['encoder']['projection_dim'],
+                                                   word_embedder=word_embedder,
+                                                   char_embedder=char_embedder)
         else:
             raise ValueError('Unknown token embedder name: {}'.format(token_embedder_name))
 

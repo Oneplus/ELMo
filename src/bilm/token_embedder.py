@@ -5,7 +5,7 @@ import torch
 from modules.embeddings import Embeddings
 from allennlp.modules.highway import Highway
 from allennlp.nn.util import get_mask_from_sequence_lengths, masked_softmax
-from allennlp.nn.util import get_range_vector, get_device_of
+from allennlp.nn.util import get_range_vector, get_device_of, get_mask_from_sequence_lengths
 from allennlp.nn.activations import Activation
 
 
@@ -207,6 +207,45 @@ class GatedRecNNTokenEmbedder(TokenEmbedderBase):
                     new_layer[:, i, :] = self.cell(layer[:, i: i + 2, :])
                 layer.masked_scatter_(mask, new_layer)
             embs.append(layer[:, 0, :].view(batch_size, seq_len, dim))
+
+        token_embedding = torch.cat(embs, dim=2)
+
+        return self.projection(token_embedding)
+
+
+class SumTokenEmbedder(TokenEmbedderBase):
+    def __init__(self, output_dim: int,
+                 word_embedder: Embeddings,
+                 char_embedder: Embeddings):
+        super(SumTokenEmbedder, self).__init__(output_dim, word_embedder, char_embedder)
+        self.emb_dim = 0
+        if word_embedder is not None:
+            self.emb_dim += word_embedder.get_output_dim()
+        if char_embedder is not None:
+            self.emb_dim += char_embedder.get_output_dim()
+
+        self.projection = torch.nn.Linear(self.emb_dim, self.output_dim, bias=True)
+
+    def forward(self, word_inputs: torch.Tensor,
+                char_inputs: torch.Tensor):
+        embs = []
+        if self.word_embedder is not None:
+            word_inputs = torch.autograd.Variable(word_inputs, requires_grad=False)
+            embed_words = self.word_embedder(word_inputs)
+            embs.append(embed_words)
+
+        if self.char_embedder is not None:
+            char_inputs, char_lengths = char_inputs
+            batch_size, seq_len = char_lengths.size()[:2]
+            char_inputs = char_inputs.view(batch_size * seq_len, -1)
+            char_lengths = char_lengths.view(batch_size * seq_len)
+
+            # (batch_size * seq_len, max_char, dim)
+            embeded_chars = self.char_embedder(char_inputs)
+            mask = get_mask_from_sequence_lengths(char_lengths, char_lengths.max()).unsqueeze(-1)
+            float_mask = mask.float()
+            embeded_chars = (embeded_chars * float_mask).sum(dim=-2)
+            embs.append(embeded_chars.view(batch_size, seq_len, -1))
 
         token_embedding = torch.cat(embs, dim=2)
 

@@ -69,13 +69,21 @@ def test_main():
         conf = json.load(fin)
 
     c = conf['token_embedder']
-    if c['char_dim'] > 0:
+    if c['char_dim'] > 0 or c['wordpiece_dim'] > 0:
         min_char = max([w for w, _ in c['filters']]) if c['name'] == 'cnn' else 1
-        char_batch = CharacterBatch(min_char=min_char,
-                                    lower=not c.get('char_cased', True),
-                                    add_sentence_boundary=c.get('add_sentence_boundary_ids', False),
-                                    add_word_boundary=c.get('add_word_boundary_ids', False),
-                                    use_cuda=use_cuda)
+        if c.get('char_dim', 0) > 0:
+            char_batch = CharacterBatch(min_char=min_char,
+                                        lower=not c.get('char_cased', True),
+                                        add_sentence_boundary=c.get('add_sentence_boundary_ids', False),
+                                        add_word_boundary=c.get('add_word_boundary_ids', False),
+                                        use_cuda=use_cuda)
+        else:
+            char_batch = WordPieceBatch(min_char=min_char,
+                                        vocab_file=c['wordpiece_vocab'],
+                                        lower=not c.get('word_cased', True),
+                                        add_sentence_boundary=c.get('add_sentence_boundary_ids', False),
+                                        add_word_boundary=c.get('add_word_boundary_ids', False),
+                                        use_cuda=use_cuda)
         with codecs.open(os.path.join(args.model, 'char.dic'), 'r', encoding='utf-8') as fpi:
             for line in fpi:
                 tokens = line.strip().split('\t')

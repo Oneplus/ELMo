@@ -9,6 +9,7 @@ from .lstm import LstmbiLm
 from .bengio03 import Bengio03HighwayBiLmV2, Bengio03HighwayBiLm, Bengio03ResNetBiLm
 from .lbl import LBLHighwayBiLm, LBLHighwayBiLmV2, LBLResNetBiLm
 from .self_attn import SelfAttentiveLBLBiLM, SelfAttentiveLBLBiLMV2
+from .cnn import GatedCnnLm
 from allennlp.modules.elmo_lstm import ElmoLstm
 from allennlp.nn.util import get_mask_from_sequence_lengths
 from modules.embeddings import Embeddings, load_embedding_txt
@@ -156,6 +157,10 @@ class BiLMBase(torch.nn.Module):
                                                   use_position=c.get('position', False),
                                                   use_relative_position=c.get('relative_position_weights', False),
                                                   dropout=conf['dropout'])
+        elif encoder_name == 'cnn':
+            self.encoder = GatedCnnLm(input_size=c['projection_dim'],
+                                      layers=c['layers'],
+                                      dropout=conf['dropout'])
         else:
             raise ValueError('Unknown encoder name: {}'.format(encoder_name))
 

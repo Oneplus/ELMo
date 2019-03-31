@@ -12,7 +12,7 @@ import torch
 import numpy as np
 import h5py
 from bilm.bilm_base import BiLMBase
-from bilm.batch import Batcher, WordBatch, CharacterBatch
+from bilm.batch import Batcher, WordBatch, CharacterBatch, WordPieceBatch
 from bilm.io_util import dict2namedtuple, read_corpus_with_original_text, read_conll_corpus_with_original_text
 
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',

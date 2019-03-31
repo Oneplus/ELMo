@@ -195,6 +195,9 @@ def test_main():
             cnt += 1
             if cnt % 1000 == 0:
                 logger.info('Finished {0} sentences.'.format(cnt))
+
+    logging.info('Token embedding time: {}'.format(model.token_embedding_time))
+    logging.info('Encoding time: {}'.format(model.encoding_time))
     for _, handler in handlers.items():
         handler.close()
 

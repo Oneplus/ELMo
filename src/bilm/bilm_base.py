@@ -3,6 +3,7 @@ from typing import Dict
 import torch
 import math
 import logging
+import time
 from .batch import WordBatch, CharacterBatch
 from .token_embedder import ConvTokenEmbedder, LstmTokenEmbedder, GatedRecNNTokenEmbedder, SumTokenEmbedder
 from .lstm import LstmbiLm
@@ -166,12 +167,18 @@ class BiLMBase(torch.nn.Module):
 
         self.output_dim = conf['encoder']['projection_dim']
 
+        self.token_embedding_time = 0
+        self.encoding_time = 0
+
     def _encoding(self, word_inputs: torch.Tensor,
                   chars_inputs: torch.Tensor,
                   lengths: torch.Tensor,):
         # NOTE: there is no dropout on the last layer.
+        start = time.time()
         embedded_tokens = self.token_embedder(word_inputs, chars_inputs)
+        self.token_embedding_time += time.time() - start
 
+        start = time.time()
         mask = get_mask_from_sequence_lengths(lengths, lengths.max())
 
         if self.add_sentence_boundary:
@@ -179,12 +186,17 @@ class BiLMBase(torch.nn.Module):
                 self._add_sentence_boundary(embedded_tokens, mask)
             encoded_tokens = self.encoder(embedded_tokens_with_boundary,
                                           mask_with_boundary)
+
+            self.encoding_time = time.time() - start
             return encoded_tokens[:, :, 1:-1, :], embedded_tokens, mask
         elif self.add_sentence_boundary_ids:
+
             encoded_tokens = self.encoder(embedded_tokens, mask)
+            self.encoding_time = time.time() - start
             return self._remove_sentence_boundaries(encoded_tokens, embedded_tokens, mask)
         else:
             encoded_tokens = self.encoder(embedded_tokens, mask)
+            self.encoding_time = time.time() - start
             return encoded_tokens, embedded_tokens, mask
 
     def _add_sentence_boundary(self, tensor: torch.Tensor,
@@ -232,3 +244,7 @@ class BiLMBase(torch.nn.Module):
 
     def forward(self, *inputs):
         raise NotImplementedError()
+
+    def reset_timer(self):
+        self.encoding_time = 0
+        self.token_embedding_time = 0

@@ -187,16 +187,16 @@ class BiLMBase(torch.nn.Module):
             encoded_tokens = self.encoder(embedded_tokens_with_boundary,
                                           mask_with_boundary)
 
-            self.encoding_time = time.time() - start
+            self.encoding_time += time.time() - start
             return encoded_tokens[:, :, 1:-1, :], embedded_tokens, mask
         elif self.add_sentence_boundary_ids:
 
             encoded_tokens = self.encoder(embedded_tokens, mask)
-            self.encoding_time = time.time() - start
+            self.encoding_time += time.time() - start
             return self._remove_sentence_boundaries(encoded_tokens, embedded_tokens, mask)
         else:
             encoded_tokens = self.encoder(embedded_tokens, mask)
-            self.encoding_time = time.time() - start
+            self.encoding_time += time.time() - start
             return encoded_tokens, embedded_tokens, mask
 
     def _add_sentence_boundary(self, tensor: torch.Tensor,

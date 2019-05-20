@@ -22,7 +22,7 @@ class ContextualizedWordEmbeddings(InputEmbedderBase):
         gamma = torch.randn(1)
         self.scores = torch.nn.Parameter(scores, requires_grad=True)
         self.gamma = torch.nn.Parameter(gamma, requires_grad=True)
-        self.softmax = torch.nn.Softmax(dim=1)
+        self.softmax = torch.nn.Softmax(dim=0)
 
     def forward(self, input_: List[List[str]]) -> torch.Tensor:
         # input_: (batch_size, seq_len, dim)

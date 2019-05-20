@@ -18,8 +18,11 @@ class ContextualizedWordEmbeddings(InputEmbedderBase):
         logger.info('dim: {}'.format(self.dim))
         logger.info('number of layers: {}'.format(self.n_layers))
 
-        weights = torch.randn(self.n_layers)
-        self.weights = torch.nn.Parameter(weights, requires_grad=True)
+        scores = torch.randn(self.n_layers)
+        gamma = torch.randn(1)
+        self.scores = torch.nn.Parameter(scores, requires_grad=True)
+        self.gamma = torch.nn.Parameter(gamma, requires_grad=True)
+        self.softmax = torch.nn.Softmax(dim=1)
 
     def forward(self, input_: List[List[str]]) -> torch.Tensor:
         # input_: (batch_size, seq_len, dim)
@@ -30,6 +33,7 @@ class ContextualizedWordEmbeddings(InputEmbedderBase):
         if self.use_cuda:
             encoding_ = encoding_.cuda()
 
+        scores = self.gamma * self.softmax(self.scores)
         for i, one_input_ in enumerate(input_):
             sentence_key = '\t'.join(one_input_).replace('.', '$period$').replace('/', '$backslash$')
             one_seq_len_ = len(one_input_)
@@ -37,7 +41,7 @@ class ContextualizedWordEmbeddings(InputEmbedderBase):
             if self.use_cuda:
                 data_ = data_.cuda()
             data_ = torch.autograd.Variable(data_, requires_grad=False)
-            encoding_[i, :one_seq_len_, :] = data_.transpose(-2, -1).matmul(self.weights)
+            encoding_[i, :one_seq_len_, :] = data_.transpose(-2, -1).matmul(scores)
 
         # output_: (batch_size, seq_len, max_seg_len, dim)
         return encoding_
